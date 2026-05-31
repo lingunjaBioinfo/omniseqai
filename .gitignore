@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+
+# Conda
+.conda/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files
+*.h5ad
+*.h5
+*.loom
+
+# Generated outputs
+outputs/
+reports/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
