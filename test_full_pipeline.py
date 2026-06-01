@@ -1,3 +1,4 @@
+from backend.final_report import FinalReport
 from backend.pipeline import SingleCellPipeline
 from backend.annotation import CellAnnotator
 from backend.markers import MarkerAnalyzer
@@ -202,3 +203,15 @@ for cluster in summary:
         print(
             f"- {signal}"
         )
+# -------------------
+# FINAL REPORT
+# -------------------
+
+reporter = FinalReport()
+
+report = reporter.generate(
+    summary,
+    communication
+)
+
+reporter.save(report)
