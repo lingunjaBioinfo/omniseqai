@@ -1,62 +1,39 @@
 class DiseaseInterpreter:
 
-    def interpret_pathways(
-        self,
-        pathways
-    ):
-
-        pathway_text = " ".join(
-            pathways
-        ).lower()
-
+    def interpret(self, markers):
+        markers = set(str(m).upper() for m in markers)
         findings = []
 
-        score = {
-            "viral": 0,
-            "inflammation": 0,
-            "adaptive": 0
+        interferon = {
+            "IFI27", "IFITM3", "IFI6", "ISG15", "MX1", "OAS1", "OASL", "IFI44L"
+        }
+        inflammatory = {
+            "S100A8", "S100A9", "FCN1", "CXCL8", "IL1B", "NCF1"
+        }
+        cytotoxic = {
+            "NKG7", "GNLY", "PRF1", "GZMB", "CTSW"
+        }
+        bcell = {
+            "MS4A1", "CD79A", "CD79B", "CD74"
         }
 
-        if "interferon" in pathway_text:
-            score["viral"] += 2
+        if len(interferon & markers) >= 2:
+            findings.append("Type-I interferon response.")
 
-        if "viral" in pathway_text:
-            score["viral"] += 2
+        if len(inflammatory & markers) >= 2:
+            findings.append("Inflammatory monocyte activation.")
 
-        if "cytokine" in pathway_text:
-            score["inflammation"] += 1
+        if len(cytotoxic & markers) >= 2:
+            findings.append("Cytotoxic immune activation.")
 
-        if "inflammatory" in pathway_text:
-            score["inflammation"] += 2
+        if len(bcell & markers) >= 2:
+            findings.append("Activated B-cell response.")
 
-        if "t cell activation" in pathway_text:
-            score["adaptive"] += 2
+        mt_count = sum(g.startswith("MT-") for g in markers)
+        if mt_count >= 3:
+            findings.append("Low-quality or stressed cell population.")
 
-        if "alpha-beta t cell activation" in pathway_text:
-            score["adaptive"] += 1
-
-        if score["viral"] >= 2:
-
-            findings.append(
-                "Possible antiviral immune response."
-            )
-
-        if score["inflammation"] >= 2:
-
-            findings.append(
-                "Inflammatory activation detected."
-            )
-
-        if score["adaptive"] >= 2:
-
-            findings.append(
-                "Activated adaptive immune response detected."
-            )
-
-        if len(findings) == 0:
-
-            findings.append(
-                "No strong disease signature identified."
-            )
+        if not findings:
+            findings.append("No strong disease signature identified.")
 
         return findings

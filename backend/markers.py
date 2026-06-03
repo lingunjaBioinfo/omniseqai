@@ -4,55 +4,42 @@ import pandas as pd
 
 class MarkerAnalyzer:
 
-    def __init__(self):
-        pass
-
-    def find_markers(
-        self,
-        adata,
-        groupby="leiden"
-    ):
-
+    def find_markers(self, adata, groupby="leiden"):
         sc.tl.rank_genes_groups(
             adata,
             groupby=groupby,
-            method="wilcoxon"
+            method="wilcoxon",
+            use_raw=False
         )
-
+        print("\nMarker analysis complete.")
         return adata
 
-    def top_markers(
-        self,
-        adata,
-        cluster,
-        n_genes=10
-    ):
+    def _clean_markers(self, genes):
+        bad_prefixes = ("RPL", "RPS", "MT-")
+        bad_genes = {"MALAT1", "NEAT1", "XIST"}
 
-        result = adata.uns["rank_genes_groups"]
+        genes = genes[
+            ~genes["names"].astype(str).str.startswith(bad_prefixes)
+        ]
+        genes = genes[
+            ~genes["names"].astype(str).isin(bad_genes)
+        ]
+        genes = genes[
+            ~genes["names"].astype(str).str.startswith("ENSG")
+        ]
+        return genes
 
-        genes = result["names"][str(cluster)]
-
-        return list(genes[:n_genes])
-
-    def summarize_clusters(
-        self,
-        adata,
-        cluster_map,
-        n_genes=10
-    ):
-
+    def summarize_clusters(self, adata, cluster_map, n_genes=10):
         summary = {}
 
-        for cluster in cluster_map:
+        for cluster in adata.obs["leiden"].cat.categories:
+            genes = sc.get.rank_genes_groups_df(adata, group=cluster)
+            genes = self._clean_markers(genes)
 
-            markers = self.top_markers(
-                adata,
-                cluster,
-                n_genes
-            )
+            markers = genes["names"].head(n_genes).tolist()
 
-            summary[cluster] = {
-                "cell_type": cluster_map[cluster],
+            summary[str(cluster)] = {
+                "cell_type": cluster_map.get(str(cluster), "Unknown"),
                 "markers": markers
             }
 

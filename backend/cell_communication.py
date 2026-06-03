@@ -1,64 +1,27 @@
 class CellCommunication:
 
-    def __init__(self):
+    def analyze(self, summary):
+        communication = {}
 
-        self.communication_rules = {
+        for cluster in summary:
+            markers = set(str(x).upper() for x in summary[cluster]["markers"])
+            signals = []
 
-            "T cells": [
-                "Adaptive immune signaling",
-                "T-cell activation"
-            ],
+            if {"CXCL8", "CXCL2", "CCL2", "CCL3"} & markers:
+                signals.append("Inflammatory chemokine signaling")
 
-            "B cells": [
-                "Antibody-mediated signaling",
-                "Antigen presentation"
-            ],
+            if {"IFI27", "IFITM3", "ISG15", "MX1"} & markers:
+                signals.append("Interferon signaling")
 
-            "Classical monocytes": [
-                "Inflammatory cytokine signaling",
-                "Innate immune activation"
-            ],
+            if {"GNLY", "NKG7", "PRF1", "GZMB"} & markers:
+                signals.append("Cytotoxic signaling")
 
-            "Non-classical monocytes": [
-                "Immune surveillance",
-                "Chemokine signaling"
-            ],
+            if {"HLA-DRA", "HLA-DRB1", "CD74"} & markers:
+                signals.append("Antigen presentation")
 
-            "CD16+ NK cells": [
-                "Cytotoxic signaling",
-                "Immune cell killing"
-            ],
+            if not signals:
+                signals.append("Unknown signaling")
 
-            "NK cells": [
-                "Cytotoxic signaling"
-            ],
+            communication[cluster] = {"signals": signals}
 
-            "Megakaryocytes/platelets": [
-                "Platelet activation",
-                "Coagulation signaling"
-            ]
-        }
-
-    def analyze(
-        self,
-        cluster_summaries
-    ):
-
-        results = {}
-
-        for cluster, info in cluster_summaries.items():
-
-            cell_type = info["cell_type"]
-
-            signals = self.communication_rules.get(
-                cell_type,
-                ["Unknown signaling"]
-            )
-
-            results[cluster] = {
-
-                "cell_type": cell_type,
-                "signals": signals
-            }
-
-        return results
+        return communication

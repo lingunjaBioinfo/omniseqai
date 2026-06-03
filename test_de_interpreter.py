@@ -1,7 +1,8 @@
-import numpy as np
 import scanpy as sc
+import numpy as np
 
 from backend.condition_de import ConditionDE
+from backend.de_interpreter import DEInterpreter
 
 
 # --------------------------
@@ -9,9 +10,6 @@ from backend.condition_de import ConditionDE
 # --------------------------
 
 adata = sc.datasets.pbmc3k()
-
-print(f"\nCells: {adata.n_obs}")
-print(f"Genes: {adata.n_vars}")
 
 # --------------------------
 # NORMALIZE
@@ -24,11 +22,10 @@ sc.pp.normalize_total(
 
 sc.pp.log1p(adata)
 
-# Convert sparse matrix to dense
 adata.X = adata.X.toarray()
 
 # --------------------------
-# RANDOM CONDITIONS
+# CONDITIONS
 # --------------------------
 
 adata.obs["condition"] = "Healthy"
@@ -45,7 +42,7 @@ adata.obs.loc[
 ] = "Disease"
 
 # --------------------------
-# INJECT SIGNAL
+# SIGNAL
 # --------------------------
 
 genes_to_modify = [
@@ -53,9 +50,6 @@ genes_to_modify = [
     "LTB",
     "LDHB"
 ]
-
-print("\nInjected genes:")
-print(genes_to_modify)
 
 disease_mask = (
     adata.obs["condition"] == "Disease"
@@ -68,55 +62,30 @@ for gene in genes_to_modify:
     adata.X[disease_mask, idx] += 5
 
 # --------------------------
-# VERIFY SIGNAL
-# --------------------------
-
-for gene in genes_to_modify:
-
-    idx = adata.var_names.get_loc(gene)
-
-    healthy_mean = adata.X[
-        ~disease_mask,
-        idx
-    ].mean()
-
-    disease_mean = adata.X[
-        disease_mask,
-        idx
-    ].mean()
-
-    print(
-        f"{gene}: "
-        f"Healthy={healthy_mean:.2f}, "
-        f"Disease={disease_mean:.2f}"
-    )
-
-# --------------------------
-# RUN DE
+# DE
 # --------------------------
 
 de = ConditionDE()
 
-adata = de.run(
-    adata,
-    condition_key="condition",
-    group1="Disease",
-    group2="Healthy"
-)
+adata = de.run(adata)
 
 results = de.top_genes(
     adata,
     n_genes=20
 )
 
-print("\nTop Differentially Expressed Genes:\n")
+# --------------------------
+# INTERPRETATION
+# --------------------------
 
-print(
-    results[
-        [
-            "names",
-            "logfoldchanges",
-            "pvals_adj"
-        ]
-    ]
+interpreter = DEInterpreter()
+
+findings = interpreter.interpret(
+    results
 )
+
+print("\n===== DE INTERPRETATION =====\n")
+
+for finding in findings:
+
+    print(f"- {finding}")

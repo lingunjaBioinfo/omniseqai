@@ -1,52 +1,52 @@
 class ConclusionEngine:
 
-    def generate_conclusion(
+    def generate(
         self,
-        cell_type,
-        markers,
-        pathways
+        cell_type
     ):
 
-        text = []
-
-        text.append(
-            f"The dominant population "
-            f"consists of {cell_type}."
+        cell_type_lower = (
+            cell_type.lower()
         )
 
-        if any(
-            x in pathways.lower()
-            for x in [
-                "t cell activation",
-                "adaptive immune"
-            ]
-        ):
-            text.append(
-                "Evidence suggests activation "
-                "of adaptive immunity."
+        if "monocyte" in cell_type_lower:
+
+            return (
+                f"{cell_type} population "
+                f"driving innate immune responses."
             )
 
-        if any(
-            x in pathways.lower()
-            for x in [
-                "interferon",
-                "viral"
-            ]
-        ):
-            text.append(
-                "This pattern may indicate "
-                "a response to viral infection."
+        elif "nk" in cell_type_lower:
+
+            return (
+                f"{cell_type} population "
+                f"consistent with antiviral "
+                f"cytotoxic activity."
             )
 
-        if any(
-            x in pathways.lower()
-            for x in [
-                "inflammatory"
-            ]
-        ):
-            text.append(
-                "Inflammatory signaling appears "
-                "to be elevated."
+        elif "t cell" in cell_type_lower:
+
+            return (
+                f"{cell_type} population "
+                f"involved in adaptive immunity."
             )
 
-        return " ".join(text)
+        elif "b cell" in cell_type_lower:
+
+            return (
+                f"{cell_type} population "
+                f"associated with humoral immunity."
+            )
+
+        elif "dendritic" in cell_type_lower:
+
+            return (
+                f"{cell_type} population "
+                f"likely involved in antigen "
+                f"presentation."
+            )
+
+        return (
+            f"Dominant population: "
+            f"{cell_type}"
+        )

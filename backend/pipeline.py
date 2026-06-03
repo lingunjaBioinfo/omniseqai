@@ -3,13 +3,42 @@ import scanpy as sc
 
 class SingleCellPipeline:
 
-    def __init__(self):
+    def preprocess(
+        self,
+        adata
+    ):
 
-        self.adata = None
+        print("\nPreprocessing dataset...")
 
-        self.raw_cells = 0
-        self.filtered_cells = 0
-        self.removed_cells = 0
+        if "total_counts" not in adata.obs:
+
+            sc.pp.calculate_qc_metrics(
+                adata,
+                inplace=True
+            )
+
+        max_val = adata.X.max()
+
+        if max_val > 50:
+
+            print(
+                "Raw counts detected."
+            )
+
+            sc.pp.normalize_total(
+                adata,
+                target_sum=10000
+            )
+
+            sc.pp.log1p(adata)
+
+        else:
+
+            print(
+                "Data already normalized."
+            )
+
+        return adata
 
     # --------------------------
     # DATA LOADING
