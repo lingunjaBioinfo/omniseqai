@@ -5,10 +5,6 @@ import scanpy as sc
 class ConditionDE:
 
     def _preprocess_for_de(self, adata):
-        """
-        Ensure the matrix is suitable for rank_genes_groups.
-        We only log-normalize if the object does not already advertise log1p.
-        """
         adata = adata.copy()
 
         if "log1p" not in adata.uns:
@@ -46,6 +42,31 @@ class ConditionDE:
 
         return adata
 
+    def _pretty_gene_names(self, adata, genes: pd.Series) -> pd.Series:
+        if genes is None:
+            return genes
+
+        out = genes.astype(str).copy()
+
+        for col in ("gene_symbol", "feature_name"):
+            if col not in adata.var.columns:
+                continue
+
+            mapping = adata.var[col].astype(str).to_dict()
+            mapped = out.map(mapping)
+
+            mask = (
+                mapped.notna()
+                & (mapped != "")
+                & (mapped != "nan")
+                & ~mapped.str.startswith("ENSG", na=False)
+                & ~mapped.str.startswith("NCBITaxon:", na=False)
+            )
+
+            out.loc[mask] = mapped.loc[mask]
+
+        return out
+
     def top_genes(
         self,
         adata,
@@ -63,10 +84,9 @@ class ConditionDE:
 
         genes = genes.copy()
 
-        genes["names"] = (
+        genes["names"] = self._pretty_gene_names(
+            adata,
             genes["names"]
-            .astype(str)
-            .str.strip()
         )
 
         for col in ["logfoldchanges", "pvals_adj", "scores"]:
