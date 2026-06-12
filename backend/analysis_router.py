@@ -777,6 +777,27 @@ class AnalysisRouter:
         except Exception as e:
             pseudobulk_error = str(e)
 
+            # If pseudobulk fails because there are too few biological
+            # replicates, do NOT fall back to cell-level DE. Cell-level DE
+            # would treat cells as independent replicates and can produce
+            # misleading effect sizes.
+            low_replicate_errors = [
+                "Need at least 2 pseudobulk samples per group",
+                "Too few pseudobulk samples",
+            ]
+
+            if any(msg in pseudobulk_error for msg in low_replicate_errors):
+                result["mode"] = "skipped_low_replicates"
+                result["status"] = "skipped"
+                result["error"] = f"Pseudobulk skipped: {pseudobulk_error}"
+                result["de_results"] = None
+                result["pseudobulk_adata"] = None
+                result["n_sig_genes"] = 0
+                result["interpretation"] = [
+                    "Differential expression skipped because this comparison has too few biological replicates for pseudobulk testing."
+                ]
+                return result
+
         # --------------------------------------------------
         # Fallback path: cell-level DE
         # --------------------------------------------------
