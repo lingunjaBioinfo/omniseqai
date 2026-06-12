@@ -3,11 +3,10 @@ from __future__ import annotations
 
 class GeneMapper:
 
-    def fix_gene_names(self, adata):
-        print("\nChecking gene identifiers...")
+    def fix_gene_names(self, adata, verbose: bool = False):
+        if verbose:
+            print("\nChecking gene identifiers...")
 
-        # If the object already has sensible gene symbols in var_names,
-        # do not touch them.
         if len(adata.var_names) > 0:
             first = str(adata.var_names[0])
             if (
@@ -15,16 +14,16 @@ class GeneMapper:
                 and "feature_name" not in adata.var.columns
                 and "gene_symbol" not in adata.var.columns
             ):
-                print("Gene symbols already detected.")
+                if verbose:
+                    print("Gene symbols already detected.")
                 return adata
 
-        # Preferred source: feature_name
         if "feature_name" in adata.var.columns:
-            print("Using feature_name as gene symbols.")
+            if verbose:
+                print("Using feature_name as gene symbols.")
 
             symbols = adata.var["feature_name"].astype(str)
 
-            # Replace blanks / missing / ENSG-like entries with gene_symbol if present
             if "gene_symbol" in adata.var.columns:
                 fallback = adata.var["gene_symbol"].astype(str)
                 mask = (
@@ -36,7 +35,6 @@ class GeneMapper:
                 )
                 symbols = symbols.where(~mask, fallback)
 
-            # Final cleanup: keep original var_names only if still missing
             fallback = adata.var_names.astype(str)
             mask = (
                 symbols.isna()
@@ -52,9 +50,9 @@ class GeneMapper:
             adata.var_names_make_unique()
             return adata
 
-        # Secondary source: gene_symbol
         if "gene_symbol" in adata.var.columns:
-            print("Using gene_symbol as gene symbols.")
+            if verbose:
+                print("Using gene_symbol as gene symbols.")
             symbols = adata.var["gene_symbol"].astype(str)
 
             mask = (
@@ -72,5 +70,6 @@ class GeneMapper:
             adata.var_names_make_unique()
             return adata
 
-        print("WARNING: No gene symbol column found. Keeping original var_names.")
+        if verbose:
+            print("WARNING: No gene symbol column found. Keeping original var_names.")
         return adata

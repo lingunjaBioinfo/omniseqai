@@ -1,46 +1,49 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
 
 import scanpy as sc
 
-from backend.analysis_router import AnalysisRouter
-from backend.router_report import RouterReport
-from backend.router_pdf_report import RouterPDFReport
+# Quiet down library noise
+sc.settings.verbosity = 0
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*storing '.*' as categorical.*")
+
+try:
+    import anndata as ad
+    if hasattr(ad, "settings") and hasattr(ad.settings, "verbosity"):
+        ad.settings.verbosity = 0
+except Exception:
+    pass
+
+from backend.pipeline_orchestrator import PipelineOrchestrator
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run OmniSeqAI on a single-cell AnnData file (.h5ad)."
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run OmniSeqAI.")
+    parser.add_argument("-i", "--input", required=True, help="Input .h5ad file")
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "exploratory", "condition"],
+        default="auto",
+        help="Analysis mode",
     )
     parser.add_argument(
-        "-i",
-        "--input",
-        required=True,
-        help="Path to input .h5ad file"
-    )
-    parser.add_argument(
-        "-o",
         "--output",
         default="reports/router_report.txt",
-        help="Path to output text report file"
+        help="Output text report path",
     )
     parser.add_argument(
         "--pdf",
         default="reports/router_report.pdf",
-        help="Path to output PDF report file"
-    )
-    parser.add_argument(
-        "--preview-lines",
-        type=int,
-        default=300,
-        help="How many lines of the report to print to console"
+        help="Output PDF report path",
     )
     return parser.parse_args()
 
 
-def main() -> None:
+def main():
     args = parse_args()
 
     input_path = Path(args.input)
@@ -50,24 +53,21 @@ def main() -> None:
     print(f"\nLoading dataset: {input_path}")
     adata = sc.read_h5ad(str(input_path))
 
-    router = AnalysisRouter()
-    profile = router.inspect(adata)
+    orchestrator = PipelineOrchestrator()
+    results = orchestrator.run(
+        adata,
+        mode=args.mode,
+        report_txt=args.output,
+        report_pdf=args.pdf,
+        generate_pdf=True,
+    )
 
-    print("\n===== DETECTED PROFILE =====")
-    for k, v in profile.items():
-        print(f"{k}: {v}")
+    decision = results.get("decision", None)
+    if decision:
+        print(f"\nChosen mode: {decision.mode}")
+        print(f"Reason: {decision.reason}")
 
-    results = router.run(adata, profile=profile)
-
-    reporter = RouterReport()
-    report = reporter.build(results)
-
-    print("\n" + report[: args.preview_lines * 80])
-
-    reporter.save(report, args.output)
-    RouterPDFReport().save(report, args.pdf)
-
-    print("\nAnalysis complete.")
+    print("\nDone.")
 
 
 if __name__ == "__main__":
