@@ -18,6 +18,7 @@ try:
 except Exception:
     pass
 
+from backend.input_loader import load_input
 from backend.pipeline_orchestrator import PipelineOrchestrator
 
 
@@ -51,7 +52,7 @@ def main():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
     print(f"\nLoading dataset: {input_path}")
-    adata = sc.read_h5ad(str(input_path))
+    adata = load_input(input_path)
 
     orchestrator = PipelineOrchestrator()
     results = orchestrator.run(
