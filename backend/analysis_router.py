@@ -552,6 +552,114 @@ class AnalysisRouter:
         return df
 
     # ------------------------------------------------------------------
+    # Pairwise analysis helpers
+    # ------------------------------------------------------------------
+    def _finalize_pairwise_result_dict(self, result):
+        """
+        Finalize one pairwise condition-comparison result.
+
+        This method should never crash a successful DE result.
+        It adds summary fields needed by reports and figure generation.
+        """
+
+        if result is None:
+            return {
+                "comparison": None,
+                "reference": None,
+                "case": None,
+                "mode": "error",
+                "status": "error",
+                "error": "Pairwise analysis returned None.",
+                "de_results": None,
+                "pseudobulk_adata": None,
+                "n_sig_genes": 0,
+                "condition_counts": {},
+                "interpretation": ["Pairwise analysis failed before producing a result."],
+            }
+
+        de_results = result.get("de_results")
+
+        # --------------------------------------------------
+        # Count significant genes
+        # --------------------------------------------------
+        n_sig = 0
+
+        if (
+            de_results is not None
+            and hasattr(de_results, "empty")
+            and not de_results.empty
+        ):
+            try:
+                if "pvals_adj" in de_results.columns:
+                    padj = de_results["pvals_adj"]
+                elif "padj" in de_results.columns:
+                    padj = de_results["padj"]
+                else:
+                    padj = None
+
+                if "logfoldchanges" in de_results.columns:
+                    lfc = de_results["logfoldchanges"]
+                elif "logFC" in de_results.columns:
+                    lfc = de_results["logFC"]
+                elif "log2FoldChange" in de_results.columns:
+                    lfc = de_results["log2FoldChange"]
+                else:
+                    lfc = None
+
+                if padj is not None and lfc is not None:
+                    sig_mask = (padj < 0.05) & (lfc.abs() >= 0.5)
+                    n_sig = int(sig_mask.sum())
+                elif padj is not None:
+                    n_sig = int((padj < 0.05).sum())
+
+            except Exception:
+                n_sig = 0
+
+        result["n_sig_genes"] = n_sig
+
+        # --------------------------------------------------
+        # Required keys
+        # --------------------------------------------------
+        result.setdefault("comparison", None)
+        result.setdefault("reference", None)
+        result.setdefault("case", None)
+        result.setdefault("mode", None)
+        result.setdefault("status", None)
+        result.setdefault("error", None)
+        result.setdefault("de_results", None)
+        result.setdefault("pseudobulk_adata", None)
+        result.setdefault("condition_counts", {})
+        result.setdefault("interpretation", [])
+
+        # --------------------------------------------------
+        # Interpretation
+        # --------------------------------------------------
+        if not result.get("interpretation"):
+            try:
+                reference = result.get("reference")
+                case = result.get("case")
+
+                try:
+                    interpretation = self._basic_de_interpretation(
+                        de_results,
+                        group1=reference,
+                        group2=case,
+                    )
+                except TypeError:
+                    interpretation = self._basic_de_interpretation(
+                        de_results,
+                        reference,
+                        case,
+                    )
+
+                result["interpretation"] = interpretation
+
+            except Exception:
+                result["interpretation"] = []
+
+        return result
+
+    # ------------------------------------------------------------------
     # Pairwise analysis
     # ------------------------------------------------------------------
     def _run_pairwise_analysis(
@@ -589,12 +697,14 @@ class AnalysisRouter:
             "interpretation": [],
         }
 
+        # --------------------------------------------------
+        # Basic metadata checks
+        # --------------------------------------------------
         if condition_key not in adata.obs.columns:
             result["error"] = "Missing condition column."
             result["interpretation"] = ["Condition metadata not available."]
-            return result
+            return self._finalize_pairwise_result_dict(result)
 
-        # Filter to comparison pair.
         pair_mask = adata.obs[condition_key].astype(str).isin([group1, group2])
         adata_pair = adata[pair_mask].copy()
 
@@ -606,7 +716,7 @@ class AnalysisRouter:
         if adata_pair.n_obs == 0:
             result["error"] = "No cells available for this comparison."
             result["interpretation"] = ["No cells available for this comparison."]
-            return result
+            return self._finalize_pairwise_result_dict(result)
 
         result["condition_counts"] = (
             adata_pair.obs[condition_key]
@@ -620,7 +730,7 @@ class AnalysisRouter:
             result["interpretation"] = [
                 "One comparison group is absent after filtering."
             ]
-            return result
+            return self._finalize_pairwise_result_dict(result)
 
         # --------------------------------------------------
         # Preferred path: pseudobulk DE
@@ -641,10 +751,10 @@ class AnalysisRouter:
 
             de_results = self.pseudobulk_de.top_genes(
                 pb_adata=pb,
-                group=group2,          # case
+                group=group2,          # case/test
                 reference=group1,      # baseline/reference
                 condition_key=condition_key,
-                n_genes=None,          # keep full table
+                n_genes=n_genes,
             )
 
             de_results = ensure_de_gene_symbols(de_results, adata_pair)
@@ -662,26 +772,35 @@ class AnalysisRouter:
         except Exception as e:
             pseudobulk_error = str(e)
 
-            # If pseudobulk fails because there are too few biological
-            # replicates, do NOT fall back to cell-level DE. Cell-level DE
-            # would treat cells as independent replicates and can produce
-            # misleading effect sizes.
-            low_replicate_errors = [
-                "Need at least 2 pseudobulk samples per group",
-                "Too few pseudobulk samples",
+        # --------------------------------------------------
+        # Low-replicate cell-type-specific comparisons:
+        # skip instead of pretending they are valid pseudobulk tests.
+        # --------------------------------------------------
+        low_replicate_terms = [
+            "Need at least 2",
+            "at least 2 pseudobulk",
+            "too few",
+            "replicate",
+            "replicates",
+        ]
+
+        is_low_replicate_error = any(
+            term.lower() in pseudobulk_error.lower()
+            for term in low_replicate_terms
+        )
+
+        if cell_type is not None and is_low_replicate_error:
+            result["mode"] = "skipped_low_replicates"
+            result["status"] = "skipped"
+            result["error"] = pseudobulk_error
+            result["de_results"] = None
+            result["pseudobulk_adata"] = None
+            result["interpretation"] = [
+                "Differential expression skipped because this cell-type comparison "
+                "has too few biological replicates for pseudobulk testing."
             ]
 
-            if any(msg in pseudobulk_error for msg in low_replicate_errors):
-                result["mode"] = "skipped_low_replicates"
-                result["status"] = "skipped"
-                result["error"] = f"Pseudobulk skipped: {pseudobulk_error}"
-                result["de_results"] = None
-                result["pseudobulk_adata"] = None
-                result["n_sig_genes"] = 0
-                result["interpretation"] = [
-                    "Differential expression skipped because this comparison has too few biological replicates for pseudobulk testing."
-                ]
-                return result
+            return self._finalize_pairwise_result_dict(result)
 
         # --------------------------------------------------
         # Fallback path: cell-level DE
@@ -694,10 +813,15 @@ class AnalysisRouter:
                 condition_key=condition_key,
                 n_genes=n_genes,
             )
+
             de_results = ensure_de_gene_symbols(de_results, adata_pair)
+
             result["mode"] = "cell_level_fallback"
-            result["status"] = "ok"
-            result["error"] = f"Pseudobulk failed: {pseudobulk_error}"
+            result["status"] = "warning"
+            result["error"] = (
+                f"Pseudobulk failed: {pseudobulk_error}; "
+                "used cell-level fallback DE."
+            )
             result["de_results"] = de_results
             result["pseudobulk_adata"] = None
 
@@ -705,15 +829,20 @@ class AnalysisRouter:
 
             return self._finalize_pairwise_result_dict(result)
 
-        except Exception as e:
-            result["mode"] = None
+        except Exception as fallback_error:
+            result["mode"] = "error"
             result["status"] = "error"
             result["error"] = (
                 f"Pseudobulk failed: {pseudobulk_error}; "
-                f"cell-level fallback failed: {e}"
+                f"cell-level fallback failed: {fallback_error}"
             )
-            result["interpretation"] = ["Differential expression failed."]
-            return result
+            result["de_results"] = None
+            result["pseudobulk_adata"] = None
+            result["interpretation"] = [
+                "Differential expression failed for this comparison."
+            ]
+
+            return self._finalize_pairwise_result_dict(result)
 
     # ------------------------------------------------------------------
     # Main router entry point
