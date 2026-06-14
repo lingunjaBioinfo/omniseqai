@@ -176,153 +176,304 @@ class PipelineOrchestrator:
         # ==================================================
         # EXPLORATORY MODE
         # ==================================================
-        pipeline = SingleCellPipeline()
+        elif decision.mode == "exploratory":
 
-        if hasattr(pipeline, "calculate_qc"):
-            adata = pipeline.calculate_qc(adata)
+            import numpy as np
+            import scanpy as sc
 
-        if hasattr(pipeline, "filter_data"):
-            adata = pipeline.filter_data(adata)
+            figure_paths: Dict[str, Any] = {}
+            exploratory_log = []
 
-        if hasattr(pipeline, "normalize_data"):
-            adata = pipeline.normalize_data(adata)
+            # --------------------------------------------------
+            # Initialize classic exploratory pipeline
+            # --------------------------------------------------
+            pipeline = SingleCellPipeline()
+            pipeline.adata = adata
 
-        if hasattr(pipeline, "identify_hvg"):
-            adata = pipeline.identify_hvg(adata)
+            def _record(message: str):
+                print(message)
+                exploratory_log.append(message)
 
-        if hasattr(pipeline, "run_pca"):
-            adata = pipeline.run_pca(adata)
+            def _is_anndata(obj) -> bool:
+                return hasattr(obj, "obs") and hasattr(obj, "var") and hasattr(obj, "X")
 
-        if hasattr(pipeline, "compute_neighbors"):
-            adata = pipeline.compute_neighbors(adata)
+            def _run_pipeline_step(method_name: str, *args, **kwargs):
+                """
+                Run a SingleCellPipeline method defensively.
 
-        if hasattr(pipeline, "run_umap"):
-            adata = pipeline.run_umap(adata)
+                Some older methods modify pipeline.adata in place and return None.
+                Some may return AnnData.
+                Some may not exist.
+                Some may fail on preprocessed datasets.
 
-        if hasattr(pipeline, "cluster_cells"):
-            adata = pipeline.cluster_cells(adata)
+                Exploratory mode should continue instead of crashing.
+                """
 
-        annotator = CellAnnotator()
+                method = getattr(pipeline, method_name, None)
 
-        try:
-            adata = annotator.annotate(adata)
-            cluster_map = annotator.cluster_annotations(adata)
-        except Exception:
-            cluster_map = {}
-
-        marker = MarkerAnalyzer()
-        adata = marker.find_markers(adata)
-
-        if cluster_map:
-            summary = marker.summarize_clusters(
-                adata,
-                cluster_map
-            )
-        else:
-            summary = {}
-
-        pathways = PathwayAnalyzer()
-        conclusion = ConclusionEngine()
-        communication = CellCommunication()
-
-        if summary:
-            for cluster in summary:
-                genes = summary[cluster].get(
-                    "markers",
-                    []
-                )
+                if method is None:
+                    _record(f"Exploratory step skipped: {method_name} not available.")
+                    return None
 
                 try:
-                    p = pathways.top_pathways(genes)
-                    summary[cluster]["pathways"] = p
-                except Exception:
-                    summary[cluster]["pathways"] = None
+                    out = method(*args, **kwargs)
 
-                summary[cluster]["conclusion"] = conclusion.generate_conclusion(
-                    summary[cluster].get("cell_type", "Unknown"),
-                    summary[cluster].get("markers", []),
-                    ""
-                )
+                    if _is_anndata(out):
+                        pipeline.adata = out
 
-            comm = communication.analyze(summary)
-        else:
-            comm = {}
+                    _record(f"Exploratory step completed: {method_name}")
+                    return out
 
-        results.update(
-            {
-                "adata": adata,
-                "cluster_map": cluster_map,
-                "summary": summary,
-                "communication": comm,
-            }
-        )
+                except TypeError as e:
+                    # Most common bug: passing adata into methods that expect only self.
+                    try:
+                        out = method()
 
-        figure_paths: Dict[str, Any] = {}
+                        if _is_anndata(out):
+                            pipeline.adata = out
 
-        if "X_umap" in adata.obsm:
-            if "cell_type" in adata.obs.columns:
-                figure_paths["umap_celltype"] = self.figures.annotated_celltype_umap(
-                    adata,
-                    celltype_col="cell_type"
-                )
+                        _record(
+                            f"Exploratory step completed after retry without arguments: {method_name}"
+                        )
+                        return out
 
-            if "condition" in adata.obs.columns:
-                figure_paths["umap_condition"] = self.figures.umap_by_column(
-                    adata,
-                    column="condition",
-                    filename="umap_condition_standard.png",
-                    title="UMAP colored by condition"
-                )
+                    except Exception as e2:
+                        _record(
+                            f"Exploratory step failed: {method_name} | {type(e2).__name__}: {e2}"
+                        )
+                        return None
 
-        results["figure_paths"] = figure_paths
+                except Exception as e:
+                    _record(
+                        f"Exploratory step failed: {method_name} | {type(e).__name__}: {e}"
+                    )
+                    return None
 
-        report_lines = []
-        report_lines.append(
-            "========== OMNISEQAI EXPLORATORY REPORT ==========\n"
-        )
-        report_lines.append("Mode: exploratory")
-        report_lines.append(f"Decision: {decision.reason}")
-        report_lines.append(f"Cells: {adata.n_obs:,}")
-        report_lines.append(f"Genes: {adata.n_vars:,}\n")
+            # --------------------------------------------------
+            # Run available pipeline steps
+            # --------------------------------------------------
+            # These are intentionally attempted defensively.
+            # If a method does not exist or fails, the fallback Scanpy section below
+            # still tries to create useful exploratory outputs.
 
-        report_lines.append("Cluster summary:")
+            for step in [
+                "calculate_qc",
+                "filter_data",
+                "normalize_data",
+                "run_pca",
+                "compute_neighbors",
+                "run_umap",
+                "cluster_cells",
+            ]:
+                _run_pipeline_step(step)
 
-        for cluster, info in summary.items():
-            report_lines.append("\n" + "=" * 70)
-            report_lines.append(f"Cluster {cluster}")
-            report_lines.append(
-                f"Cell type: {info.get('cell_type')}"
-            )
-            report_lines.append(
-                f"Markers: {', '.join(info.get('markers', [])[:5])}"
-            )
-            report_lines.append(
-                f"Conclusion: {info.get('conclusion')}"
-            )
-            report_lines.append("Communication:")
+            adata = pipeline.adata
 
-            for signal in comm.get(
-                cluster,
-                {}
-            ).get(
-                "signals",
-                ["Unknown signaling"]
+            # --------------------------------------------------
+            # Fallback preprocessing if pipeline did not produce UMAP
+            # --------------------------------------------------
+            # This makes exploratory mode work on new external datasets
+            # like Paul15 even if the older SingleCellPipeline branch is incomplete.
+
+            if "X_umap" not in adata.obsm:
+                try:
+                    _record("Fallback: computing PCA/neighbors/UMAP with Scanpy.")
+
+                    # Avoid modifying raw count data too aggressively if already processed.
+                    # Paul15 is already normalized/log-like, so PCA can usually run directly.
+                    if "X_pca" not in adata.obsm:
+                        n_comps = min(50, adata.n_obs - 1, adata.n_vars - 1)
+                        n_comps = max(2, n_comps)
+
+                        sc.tl.pca(
+                            adata,
+                            n_comps=n_comps,
+                            svd_solver="arpack",
+                        )
+
+                    n_pcs = min(30, adata.obsm["X_pca"].shape[1])
+
+                    sc.pp.neighbors(
+                        adata,
+                        n_neighbors=15,
+                        n_pcs=n_pcs,
+                    )
+
+                    sc.tl.umap(adata)
+
+                    _record("Fallback UMAP completed.")
+
+                except Exception as e:
+                    _record(
+                        f"Fallback UMAP failed: {type(e).__name__}: {e}"
+                    )
+
+            # --------------------------------------------------
+            # Fallback clustering if no cluster column exists
+            # --------------------------------------------------
+            existing_cluster_cols = [
+                col for col in ["leiden", "louvain", "cluster", "clusters"]
+                if col in adata.obs.columns
+            ]
+
+            if not existing_cluster_cols:
+                try:
+                    _record("Fallback: computing Leiden clusters.")
+
+                    if "neighbors" not in adata.uns:
+                        if "X_pca" not in adata.obsm:
+                            n_comps = min(50, adata.n_obs - 1, adata.n_vars - 1)
+                            n_comps = max(2, n_comps)
+
+                            sc.tl.pca(
+                                adata,
+                                n_comps=n_comps,
+                                svd_solver="arpack",
+                            )
+
+                        n_pcs = min(30, adata.obsm["X_pca"].shape[1])
+
+                        sc.pp.neighbors(
+                            adata,
+                            n_neighbors=15,
+                            n_pcs=n_pcs,
+                        )
+
+                    sc.tl.leiden(
+                        adata,
+                        resolution=0.6,
+                        key_added="cluster",
+                    )
+
+                    _record("Fallback Leiden clustering completed.")
+
+                except Exception as e:
+                    _record(
+                        f"Fallback clustering failed: {type(e).__name__}: {e}"
+                    )
+
+            # --------------------------------------------------
+            # Pick best label column for exploratory plots
+            # --------------------------------------------------
+            label_col = None
+
+            for candidate in [
+                "cell_type",
+                "celltype",
+                "cell_type_major",
+                "annotation",
+                "paul15_clusters",
+                "bulk_labels",
+                "leiden",
+                "louvain",
+                "cluster",
+                "clusters",
+            ]:
+                if candidate in adata.obs.columns:
+                    label_col = candidate
+                    break
+
+            if label_col is None:
+                _record("No cell-type or cluster label column found for exploratory UMAP.")
+            else:
+                _record(f"Exploratory label column selected: {label_col}")
+
+            # --------------------------------------------------
+            # Marker genes
+            # --------------------------------------------------
+            if label_col is not None and "rank_genes_groups" not in adata.uns:
+                try:
+                    # Avoid marker testing if only one group exists.
+                    n_groups = adata.obs[label_col].astype(str).nunique()
+
+                    if n_groups > 1:
+                        _record(f"Computing marker genes using groupby={label_col}.")
+
+                        sc.tl.rank_genes_groups(
+                            adata,
+                            groupby=label_col,
+                            method="wilcoxon",
+                        )
+
+                        _record("Marker gene calculation completed.")
+                    else:
+                        _record("Marker gene calculation skipped: only one label group.")
+
+                except Exception as e:
+                    _record(
+                        f"Marker gene calculation failed: {type(e).__name__}: {e}"
+                    )
+
+            # --------------------------------------------------
+            # Figures
+            # --------------------------------------------------
+            if "X_umap" in adata.obsm and label_col is not None:
+                try:
+                    figure_paths["umap_exploratory"] = self.figures.umap_by_column(
+                        adata,
+                        column=label_col,
+                        filename="umap_exploratory_labels.png",
+                        title=f"UMAP annotated by {label_col}",
+                    )
+                except Exception as e:
+                    _record(
+                        f"Exploratory UMAP figure failed: {type(e).__name__}: {e}"
+                    )
+
+            # Also plot clusters separately if cell_type and cluster both exist.
+            cluster_col = None
+
+            for candidate in ["leiden", "louvain", "cluster", "clusters"]:
+                if candidate in adata.obs.columns:
+                    cluster_col = candidate
+                    break
+
+            if (
+                "X_umap" in adata.obsm
+                and cluster_col is not None
+                and cluster_col != label_col
             ):
-                report_lines.append(f"- {signal}")
+                try:
+                    figure_paths["umap_clusters"] = self.figures.umap_by_column(
+                        adata,
+                        column=cluster_col,
+                        filename="umap_exploratory_clusters.png",
+                        title=f"UMAP colored by {cluster_col}",
+                    )
+                except Exception as e:
+                    _record(
+                        f"Exploratory cluster UMAP failed: {type(e).__name__}: {e}"
+                    )
 
-        report_text = "\n".join(report_lines)
-
-        self.reporter.save(
-            report_text,
-            report_txt
-        )
-
-        if generate_pdf:
-            self.pdf_reporter.save(
-                results,
-                report_pdf
+            # --------------------------------------------------
+            # Store results
+            # --------------------------------------------------
+            results.update(
+                {
+                    "adata": adata,
+                    "figure_paths": figure_paths,
+                    "exploratory_results": {
+                        "n_cells": int(adata.n_obs),
+                        "n_genes": int(adata.n_vars),
+                        "label_column": label_col,
+                        "cluster_column": cluster_col,
+                        "steps": exploratory_log,
+                        "has_umap": "X_umap" in adata.obsm,
+                        "has_marker_genes": "rank_genes_groups" in adata.uns,
+                    },
+                }
+            )
+            report_text = self.reporter.build(results)
+            self.reporter.save(
+                report_text,
+                report_txt
             )
 
-        results["report_text"] = report_text
+            if generate_pdf:
+                self.pdf_reporter.save(
+                    results,
+                    report_pdf
+                )
 
-        return results
+            results["report_text"] = report_text
+            return results

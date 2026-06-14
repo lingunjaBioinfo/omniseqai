@@ -200,7 +200,166 @@ class RouterReport:
 
         return "\n".join(lines)
 
+    def _build_exploratory_report(self, results: Dict[str, Any]) -> str:
+        """
+        Build a clean report for exploratory mode.
+
+        Exploratory datasets may not have condition, sample, patient,
+        or replicate metadata. This report avoids condition-DE and
+        pseudobulk sections.
+        """
+
+        from datetime import datetime
+
+        adata = results.get("adata")
+        profile = results.get("profile")
+        decision = results.get("decision")
+        exploratory = results.get("exploratory_results", {})
+        figure_paths = results.get("figure_paths", {})
+
+        label_col = exploratory.get("label_column")
+        cluster_col = exploratory.get("cluster_column")
+
+        lines = []
+
+        lines.append("OmniSeqAI Exploratory Analysis Report")
+        lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        lines.append("Selected mode: exploratory")
+
+        if decision is not None:
+            reason = getattr(decision, "reason", None)
+            if reason:
+                lines.append(reason)
+
+        lines.append("")
+        lines.append("Executive Summary")
+
+        if adata is not None:
+            lines.append(f"- Dataset size: {adata.n_obs:,} cells x {adata.n_vars:,} genes")
+
+        if label_col:
+            lines.append(f"- Main annotation column: {label_col}")
+
+        if cluster_col:
+            lines.append(f"- Cluster column: {cluster_col}")
+
+        if exploratory.get("has_umap"):
+            lines.append("- UMAP embedding available/generated")
+
+        if exploratory.get("has_marker_genes"):
+            lines.append("- Marker genes calculated")
+
+        lines.append("")
+        lines.append("Dataset Overview")
+
+        if adata is not None:
+            lines.append(f"Cells: {adata.n_obs:,}")
+            lines.append(f"Genes: {adata.n_vars:,}")
+
+        if profile is not None:
+            profile_cell_type_col = getattr(profile, "cell_type_col", None)
+            profile_condition_col = getattr(profile, "condition_col", None)
+            profile_sample_col = getattr(profile, "sample_col", None)
+            profile_patient_col = getattr(profile, "patient_col", None)
+            profile_batch_col = getattr(profile, "batch_col", None)
+        else:
+            profile_cell_type_col = None
+            profile_condition_col = None
+            profile_sample_col = None
+            profile_patient_col = None
+            profile_batch_col = None
+
+        # Use exploratory label column as fallback if detector did not classify it.
+        display_cell_type_col = profile_cell_type_col or label_col
+
+        lines.append(f"Cell type / annotation column: {display_cell_type_col or 'None detected'}")
+        lines.append(f"Condition column: {profile_condition_col or 'None detected'}")
+        lines.append(f"Sample column: {profile_sample_col or 'None detected'}")
+        lines.append(f"Patient column: {profile_patient_col or 'None detected'}")
+        lines.append(f"Batch column: {profile_batch_col or 'None detected'}")
+
+        lines.append("")
+        lines.append("Exploratory Workflow")
+
+        steps = exploratory.get("steps", [])
+
+        if steps:
+            for step in steps:
+                lines.append(f"- {step}")
+        else:
+            lines.append("- No exploratory workflow log available.")
+
+        lines.append("")
+        lines.append("Figures")
+
+        if figure_paths:
+            for name, path in figure_paths.items():
+                lines.append(f"- {name}: {path}")
+        else:
+            lines.append("- No figures generated.")
+
+        lines.append("")
+        lines.append("Marker Genes")
+
+        if adata is not None and "rank_genes_groups" in adata.uns:
+            try:
+                rgg = adata.uns["rank_genes_groups"]
+                names = rgg["names"]
+
+                if hasattr(names, "dtype") and names.dtype.names is not None:
+                    groups = list(names.dtype.names)
+
+                    for group in groups[:12]:
+                        top_genes = [str(g) for g in names[group][:10]]
+                        lines.append(f"{group}: {', '.join(top_genes)}")
+                else:
+                    lines.append("Marker genes were calculated but could not be summarized cleanly.")
+
+            except Exception as e:
+                lines.append(f"Marker gene summary unavailable: {type(e).__name__}: {e}")
+        else:
+            lines.append("No marker gene results available.")
+
+        lines.append("")
+        lines.append("Interpretation")
+
+        lines.append(
+            "This dataset was processed in exploratory mode because no valid "
+            "condition/sample/patient structure was detected for pseudobulk "
+            "condition analysis."
+        )
+
+        if label_col:
+            lines.append(
+                f"Cells were visualized and summarized using the annotation column '{label_col}'."
+            )
+
+        if cluster_col:
+            lines.append(
+                f"Unsupervised clustering results are available in '{cluster_col}'."
+            )
+
+        lines.append("")
+        lines.append("Methods")
+
+        lines.append("- OmniSeqAI detected available metadata columns before selecting the analysis mode.")
+        lines.append("- Exploratory mode was used because no valid condition contrast was available.")
+        lines.append("- QC, filtering, normalization, PCA, neighbor graph construction, UMAP, and clustering were run when supported.")
+        lines.append("- Marker genes were calculated using Scanpy rank_genes_groups where possible.")
+        lines.append("- No pseudobulk DE was run because biological condition and replicate metadata were unavailable.")
+        lines.append("- No condition-specific interpretation was generated for this dataset.")
+
+        # Remove accidental empty trailing whitespace lines.
+        cleaned_lines = [str(line).rstrip() for line in lines]
+
+        return "\n".join(cleaned_lines)
+
     def build(self, results: Dict[str, Any]) -> str:
+        decision = results.get("decision")
+        mode = getattr(decision, "mode", None)
+
+        if mode == "exploratory":
+            return self._build_exploratory_report(results)
         profile = results.get("profile", {})
         plan = results.get("plan", None)
         adata = results.get("adata", None)
