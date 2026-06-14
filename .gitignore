@@ -36,3 +36,7 @@ reports/
 
 # Temporary files
 *.tmp
+runs/
+reports/
+outputs/
+data/external/
