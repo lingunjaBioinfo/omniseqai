@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from types import SimpleNamespace
 
 from backend.metadata_detector import MetadataDetector
 from backend.mode_selector import ModeSelector
 from backend.analysis_router import AnalysisRouter
+from backend.gene_symbol_utils import ensure_de_gene_symbols
 from backend.router_report import RouterReport
 from backend.router_pdf_report import RouterPDFReport
 from backend.report_figures import ReportFigures
@@ -43,6 +45,14 @@ class PipelineOrchestrator:
         report_txt: str = "reports/router_report.txt",
         report_pdf: str = "reports/router_report.pdf",
     ) -> Dict[str, Any]:
+
+        # Preserve original gene annotation before router modifies adata.
+        # This is required for mapping Ensembl IDs back to gene symbols
+        # in volcano plots, heatmaps, and reports.
+        gene_symbol_reference = SimpleNamespace(
+            var=adata.var.copy(),
+            var_names=adata.var_names.astype(str).copy(),
+        )
 
         # Detect metadata once for mode selection.
         # Standardization is handled inside the selected branch.
@@ -108,6 +118,17 @@ class PipelineOrchestrator:
 
             for pair, info in condition_de_results.items():
                 de_results = info.get("de_results")
+                pb = info.get("pseudobulk_adata")
+
+                symbol_source = gene_symbol_reference
+
+                if (
+                    de_results is not None
+                    and hasattr(de_results, "empty")
+                    and not de_results.empty
+                ):
+                    de_results = ensure_de_gene_symbols(de_results, symbol_source)
+                    info["de_results"] = de_results
 
                 pair_name = (
                     f"{pair[0]}_vs_{pair[1]}"
@@ -116,19 +137,20 @@ class PipelineOrchestrator:
                 )
 
                 figure_paths["volcano"] = self.figures.volcano(
-                    de_results,
+                    de_results=de_results,
+                    group1=pair[0],
+                    group2=pair[1],
                     title=f"{pair[0]} vs {pair[1]}",
-                    filename=f"volcano_{pair_name}_standard.png"
+                    filename=f"volcano_{pair_name}_standard.png",
                 )
 
-                pb = info.get("pseudobulk_adata")
                 if pb is not None:
                     figure_paths["pseudobulk_heatmap"] = self.figures.pseudobulk_heatmap(
                         pb,
                         de_results,
                         condition_col="condition",
                         filename=f"pseudobulk_heatmap_{pair_name}.png",
-                        top_n=40
+                        top_n=40,
                     )
 
                 # Only one primary whole-dataset comparison for now.

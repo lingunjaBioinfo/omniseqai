@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import scipy.sparse as sp
 import scipy.cluster.hierarchy as sch
 from matplotlib.patches import Patch
-
+from backend.signature_genes import priority_label_genes
 
 class ReportFigures:
     """
@@ -73,6 +73,22 @@ class ReportFigures:
         title: Optional[str] = None,
         max_categories: int = 12,
     ):
+        """
+        Polished UMAP plot for condition/cell-type metadata columns.
+
+        Features:
+        - readable title and axes
+        - minor categories grouped as Other
+        - legend outside plot
+        - small point size for large datasets
+        - high-resolution output
+        """
+
+        import os
+        import numpy as np
+        import pandas as pd
+        import matplotlib.pyplot as plt
+
         if "X_umap" not in adata.obsm:
             print("No UMAP found.")
             return None
@@ -84,21 +100,58 @@ class ReportFigures:
         filename = filename or f"umap_{column}.png"
         title = title or f"UMAP colored by {column}"
 
+        output_dir = (
+            getattr(self, "output_dir", None)
+            or getattr(self, "outdir", None)
+            or getattr(self, "figures_dir", None)
+            or "outputs/report_figures"
+        )
+
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, filename)
+
         umap = adata.obsm["X_umap"]
-        labels = adata.obs[column].astype(str).map(self._clean_label)
+
+        clean_label = getattr(self, "_clean_label", lambda x: str(x))
+        labels = adata.obs[column].astype(str).map(clean_label)
 
         counts = labels.value_counts()
         categories = counts.index[:max_categories].tolist()
-        palette = self._palette(categories)
 
-        fig, ax = plt.subplots(figsize=(8.8, 6.8), dpi=300)
+        if hasattr(self, "_palette"):
+            palette = self._palette(categories)
+        else:
+            cmap = plt.get_cmap("tab20")
+            palette = {
+                cat: cmap(i / max(len(categories) - 1, 1))
+                for i, cat in enumerate(categories)
+            }
 
+        n_cells = adata.n_obs
+
+        if n_cells > 100_000:
+            point_size = 1.2
+            alpha = 0.45
+        elif n_cells > 50_000:
+            point_size = 1.8
+            alpha = 0.55
+        elif n_cells > 20_000:
+            point_size = 2.5
+            alpha = 0.65
+        else:
+            point_size = 4.0
+            alpha = 0.75
+
+        fig, ax = plt.subplots(figsize=(9.2, 7.0), dpi=300)
+
+        # Plot minor categories first as background.
         minor_mask = ~labels.isin(categories)
+
         if minor_mask.sum() > 0:
             ax.scatter(
                 umap[minor_mask, 0],
                 umap[minor_mask, 1],
-                s=3,
+                s=max(point_size * 0.8, 0.8),
                 alpha=0.12,
                 color="#BDBDBD",
                 linewidths=0,
@@ -106,37 +159,48 @@ class ReportFigures:
                 label=f"Other (n={int(minor_mask.sum()):,})",
             )
 
+        # Plot major categories.
         for cat in categories:
             mask = labels == cat
+
             ax.scatter(
                 umap[mask, 0],
                 umap[mask, 1],
-                s=4,
-                alpha=0.75,
-                color=palette[cat],
+                s=point_size,
+                alpha=alpha,
+                color=palette.get(cat, "#333333"),
                 linewidths=0,
                 rasterized=True,
                 label=f"{cat} (n={int(mask.sum()):,})",
             )
 
-        ax.set_title(title, fontsize=16, pad=12, weight="bold")
-        ax.set_xlabel("UMAP1", fontsize=11)
-        ax.set_ylabel("UMAP2", fontsize=11)
-
-        ax.legend(
-            bbox_to_anchor=(1.02, 1),
-            loc="upper left",
-            frameon=False,
-            fontsize=8,
-            markerscale=3,
-        )
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=14)
+        ax.set_xlabel("UMAP 1", fontsize=12)
+        ax.set_ylabel("UMAP 2", fontsize=12)
 
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.grid(False)
 
+        ax.tick_params(axis="both", labelsize=10)
+
+        # Put legend outside so it does not cover cells.
+        ax.legend(
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=9,
+            markerscale=2.0,
+            borderaxespad=0.0,
+        )
+
         fig.tight_layout()
-        return self._save(fig, filename)
+
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+        print(f"Saved figure: {output_path}")
+        return output_path
 
     def annotated_celltype_umap(
         self,
@@ -286,165 +350,534 @@ class ReportFigures:
 
     def volcano(
         self,
-        de_results: pd.DataFrame,
-        title: str = "Volcano plot",
-        filename: str = "volcano_plot_standard.png",
-        sig_p: float = 0.05,
-        sig_lfc: float = 0.5,
-        annotate_top_n: int = 8,
+        de_results=None,
+        group1=None,
+        group2=None,
+        output_path=None,
+        title=None,
+        padj_cutoff: float = 0.05,
+        lfc_cutoff: float = 0.5,
+        max_labels: int = 12,
+        **kwargs,
     ):
-        try:
-            from adjustText import adjust_text
-            has_adjust_text = True
-        except Exception:
-            has_adjust_text = False
+        """
+        Generate a publication-readable volcano plot.
 
-        if de_results is None or de_results.empty:
+        Fixes:
+        - parses group labels from title when needed
+        - positive logFC direction is explicit
+        - caps extreme x/y display values without changing statistics
+        - prioritizes biologically meaningful signature genes for labels
+        - avoids labeling Ensembl IDs unless no better labels exist
+
+        Convention:
+            group1 = baseline/reference
+            group2 = case/test
+            positive logFC = group2 higher than group1
+        """
+
+        import os
+        import re
+        import numpy as np
+        import pandas as pd
+        import matplotlib.pyplot as plt
+
+        try:
+            from backend.signature_genes import DEFAULT_PRIORITY_GENES, normalize_gene_name
+        except Exception:
+            DEFAULT_PRIORITY_GENES = [
+                "ISG15",
+                "ISG20",
+                "IFIT1",
+                "IFIT2",
+                "IFIT3",
+                "IFI6",
+                "IFI44L",
+                "MX1",
+                "OAS1",
+                "OAS2",
+                "STAT1",
+                "IRF7",
+                "CXCL10",
+                "DDX58",
+                "HERC6",
+                "UBE2L6",
+                "BST2",
+                "RSAD2",
+                "EPSTI1",
+                "GBP1",
+                "GBP5",
+                "CCL2",
+                "CCL3",
+                "CCL4",
+                "CCL8",
+                "IL1B",
+                "TNF",
+                "NFKBIA",
+                "HLA-A",
+                "HLA-B",
+                "HLA-C",
+                "HLA-E",
+                "TAP1",
+                "TAP2",
+            ]
+
+            def normalize_gene_name(x):
+                return str(x).strip().upper()
+
+        # --------------------------------------------------
+        # Resolve DE table
+        # --------------------------------------------------
+        if de_results is None:
+            de_results = (
+                kwargs.get("df")
+                or kwargs.get("data")
+                or kwargs.get("de_table")
+                or kwargs.get("de")
+            )
+
+        # --------------------------------------------------
+        # Resolve title and groups
+        # --------------------------------------------------
+        if title is None:
+            title = kwargs.get("plot_title") or kwargs.get("comparison_title")
+
+        if group1 is None:
+            group1 = (
+                kwargs.get("group1")
+                or kwargs.get("reference")
+                or kwargs.get("ref")
+                or kwargs.get("baseline")
+                or kwargs.get("control")
+            )
+
+        if group2 is None:
+            group2 = (
+                kwargs.get("group2")
+                or kwargs.get("case")
+                or kwargs.get("test")
+                or kwargs.get("condition")
+                or kwargs.get("treatment")
+            )
+
+        comparison = kwargs.get("comparison")
+
+        if comparison is not None and (group1 is None or group2 is None):
+            try:
+                group1, group2 = comparison
+            except Exception:
+                pass
+
+        if (group1 is None or group2 is None) and title is not None:
+            title_str = str(title).strip()
+
+            match = re.match(
+                r"^\s*(.*?)\s+(?:vs|versus)\s+(.*?)\s*$",
+                title_str,
+                flags=re.IGNORECASE,
+            )
+
+            if match:
+                if group1 is None:
+                    group1 = match.group(1).strip()
+
+                if group2 is None:
+                    group2 = match.group(2).strip()
+
+            elif "_vs_" in title_str:
+                parts = title_str.split("_vs_", 1)
+
+                if len(parts) == 2:
+                    if group1 is None:
+                        group1 = parts[0].strip()
+
+                    if group2 is None:
+                        group2 = parts[1].strip()
+
+        group1 = str(group1) if group1 is not None else "Reference"
+        group2 = str(group2) if group2 is not None else "Case"
+
+        if title is None:
+            title = f"{group1} vs {group2}"
+
+        # --------------------------------------------------
+        # Resolve output path
+        # --------------------------------------------------
+        if output_path is None:
+            output_path = (
+                kwargs.get("save_path")
+                or kwargs.get("fig_path")
+                or kwargs.get("path")
+                or kwargs.get("outfile")
+            )
+
+        filename = kwargs.get("filename")
+
+        output_dir = (
+            getattr(self, "output_dir", None)
+            or getattr(self, "outdir", None)
+            or getattr(self, "figures_dir", None)
+            or "outputs/report_figures"
+        )
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        if output_path is None and filename is not None:
+            output_path = os.path.join(output_dir, filename)
+
+        if output_path is None:
+            output_path = os.path.join(
+                output_dir,
+                f"volcano_{group1}_vs_{group2}_standard.png",
+            )
+
+        # --------------------------------------------------
+        # Validate DE table
+        # --------------------------------------------------
+        if de_results is None:
             print("No DE results for volcano.")
+            return None
+
+        if not hasattr(de_results, "empty") or de_results.empty:
+            print("No DE results for volcano.")
+            return None
+
+        required = {"names", "logfoldchanges", "pvals_adj"}
+
+        if not required.issubset(set(de_results.columns)):
+            print("DE results missing required columns for volcano.")
             return None
 
         df = de_results.copy()
 
-        required = {"names", "logfoldchanges", "pvals_adj"}
-        if not required.issubset(df.columns):
-            print("DE results missing required columns.")
-            return None
-
-        df["names"] = df["names"].astype(str).str.strip()
+        df["names"] = df["names"].astype(str)
         df["logfoldchanges"] = pd.to_numeric(df["logfoldchanges"], errors="coerce")
         df["pvals_adj"] = pd.to_numeric(df["pvals_adj"], errors="coerce")
 
-        df = df.dropna(subset=["names", "logfoldchanges", "pvals_adj"])
-
-        df = df[
-            ~df["names"].str.startswith("ENSG", na=False)
-            & ~df["names"].str.startswith("NCBITaxon:", na=False)
-        ].copy()
+        df = df.dropna(subset=["names", "logfoldchanges", "pvals_adj"]).copy()
 
         if df.empty:
-            print("No symbol-mapped genes for volcano.")
+            print("No usable DE results for volcano.")
             return None
 
-        df["pvals_adj"] = df["pvals_adj"].clip(lower=1e-300, upper=1.0)
-        df["neglog10_padj"] = -np.log10(df["pvals_adj"])
+        # --------------------------------------------------
+        # Better display labels
+        # --------------------------------------------------
+        symbol_candidates = [
+            "gene_symbol",
+            "symbol",
+            "gene",
+            "features",
+            "feature_name",
+        ]
 
-        df["direction"] = "Not significant"
+        display_col = None
+
+        for col in symbol_candidates:
+            if col in df.columns:
+                display_col = col
+                break
+
+        if display_col is not None:
+            df["display_gene"] = df[display_col].astype(str)
+            bad_symbol = (
+                df["display_gene"].isna()
+                | (df["display_gene"].astype(str).str.strip() == "")
+                | (df["display_gene"].astype(str).str.lower() == "nan")
+            )
+            df.loc[bad_symbol, "display_gene"] = df.loc[bad_symbol, "names"].astype(str)
+        else:
+            df["display_gene"] = df["names"].astype(str)
+
+        df["display_gene"] = df["display_gene"].astype(str)
+        df["display_upper"] = df["display_gene"].map(normalize_gene_name)
+
+        def is_ensembl_like(value):
+            value = str(value).strip().upper()
+            return value.startswith("ENSG") or value.startswith("ENSMUSG")
+
+        df["is_ensembl_label"] = df["display_gene"].map(is_ensembl_like)
+
+        # --------------------------------------------------
+        # Compute transformed axes
+        # --------------------------------------------------
+        tiny = np.nextafter(0, 1)
+        df["pvals_adj_safe"] = df["pvals_adj"].clip(lower=tiny)
+        df["neg_log10_padj_raw"] = -np.log10(df["pvals_adj_safe"])
+
+        # Display caps prevent one or two extreme values from ruining the plot.
+        abs_lfc = df["logfoldchanges"].abs().replace([np.inf, -np.inf], np.nan).dropna()
+        y_raw = df["neg_log10_padj_raw"].replace([np.inf, -np.inf], np.nan).dropna()
+
+        if len(abs_lfc) > 0:
+            x_cap = float(np.nanpercentile(abs_lfc, 99.0))
+            x_cap = max(3.0, min(x_cap, 8.0))
+        else:
+            x_cap = 5.0
+
+        if len(y_raw) > 0:
+            y_cap = float(np.nanpercentile(y_raw, 99.0))
+            y_cap = max(10.0, min(y_cap, 60.0))
+        else:
+            y_cap = 20.0
+
+        df["x_plot"] = df["logfoldchanges"].clip(lower=-x_cap, upper=x_cap)
+        df["y_plot"] = df["neg_log10_padj_raw"].clip(upper=y_cap)
+
+        # --------------------------------------------------
+        # Categorize genes
+        # --------------------------------------------------
+        higher_case_label = f"Higher in {group2}"
+        higher_ref_label = f"Higher in {group1}"
+
+        df["category"] = "Not significant"
 
         df.loc[
-            (df["pvals_adj"] < sig_p) & (df["logfoldchanges"] >= sig_lfc),
-            "direction",
-        ] = "Upregulated"
+            (df["pvals_adj"] < padj_cutoff)
+            & (df["logfoldchanges"] >= lfc_cutoff),
+            "category",
+        ] = higher_case_label
 
         df.loc[
-            (df["pvals_adj"] < sig_p) & (df["logfoldchanges"] <= -sig_lfc),
-            "direction",
-        ] = "Downregulated"
+            (df["pvals_adj"] < padj_cutoff)
+            & (df["logfoldchanges"] <= -lfc_cutoff),
+            "category",
+        ] = higher_ref_label
 
-        up_n = int((df["direction"] == "Upregulated").sum())
-        down_n = int((df["direction"] == "Downregulated").sum())
+        up_count = int((df["category"] == higher_case_label).sum())
+        down_count = int((df["category"] == higher_ref_label).sum())
+        nonsig_count = int((df["category"] == "Not significant").sum())
 
-        fig, ax = plt.subplots(figsize=(9.0, 6.8), dpi=300)
+        # --------------------------------------------------
+        # Select labels
+        # --------------------------------------------------
+        df["abs_logfoldchanges"] = df["logfoldchanges"].abs()
+
+        significant = df[
+            (df["pvals_adj"] < padj_cutoff)
+            & (df["logfoldchanges"].abs() >= lfc_cutoff)
+        ].copy()
+
+        selected_indices = []
+        selected_upper = set()
+
+        priority_upper = [normalize_gene_name(g) for g in DEFAULT_PRIORITY_GENES]
+
+        # First: known signature genes.
+        for gene_upper in priority_upper:
+            match = significant[significant["display_upper"] == gene_upper].copy()
+
+            if match.empty:
+                continue
+
+            match = match.sort_values(
+                ["pvals_adj", "abs_logfoldchanges"],
+                ascending=[True, False],
+            )
+
+            idx = match.index[0]
+            label = str(df.loc[idx, "display_gene"])
+            label_upper = normalize_gene_name(label)
+
+            if label_upper not in selected_upper:
+                selected_indices.append(idx)
+                selected_upper.add(label_upper)
+
+            if len(selected_indices) >= max_labels:
+                break
+
+        # Second: strongest non-Ensembl genes.
+        if len(selected_indices) < max_labels:
+            fallback = significant[
+                ~significant["display_upper"].isin(selected_upper)
+                & (~significant["is_ensembl_label"])
+            ].copy()
+
+            fallback = fallback.sort_values(
+                ["pvals_adj", "abs_logfoldchanges"],
+                ascending=[True, False],
+            )
+
+            for idx, row in fallback.iterrows():
+                label = str(row["display_gene"])
+                label_upper = normalize_gene_name(label)
+
+                if label_upper not in selected_upper:
+                    selected_indices.append(idx)
+                    selected_upper.add(label_upper)
+
+                if len(selected_indices) >= max_labels:
+                    break
+
+        if selected_indices:
+            label_df = df.loc[selected_indices].copy()
+            label_df = label_df.drop_duplicates(subset=["display_upper"])
+        else:
+            label_df = pd.DataFrame(columns=df.columns)
+
+        
+
+        # --------------------------------------------------
+        # Plot
+        # --------------------------------------------------
+        fig, ax = plt.subplots(figsize=(9.8, 7.2))
 
         colors = {
-            "Not significant": "#BDBDBD",
-            "Upregulated": "#D62728",
-            "Downregulated": "#1F77B4",
+            "Not significant": "#C7C7C7",
+            higher_ref_label: "#377EB8",
+            higher_case_label: "#E41A1C",
         }
 
-        for group in ["Not significant", "Downregulated", "Upregulated"]:
-            sub = df[df["direction"] == group]
+        plot_order = [
+            "Not significant",
+            higher_ref_label,
+            higher_case_label,
+        ]
+
+        for category in plot_order:
+            sub = df[df["category"] == category]
 
             if sub.empty:
                 continue
 
+            if category == higher_ref_label:
+                label = f"{higher_ref_label} (n={down_count})"
+            elif category == higher_case_label:
+                label = f"{higher_case_label} (n={up_count})"
+            else:
+                label = f"Not significant (n={nonsig_count})"
+
             ax.scatter(
-                sub["logfoldchanges"],
-                sub["neglog10_padj"],
-                s=15 if group == "Not significant" else 22,
-                alpha=0.30 if group == "Not significant" else 0.85,
-                color=colors[group],
-                linewidths=0,
-                rasterized=True,
-                label=f"{group} (n={len(sub):,})",
+                sub["x_plot"],
+                sub["y_plot"],
+                s=13,
+                alpha=0.72,
+                c=colors.get(category, "#C7C7C7"),
+                edgecolors="none",
+                label=label,
             )
 
-        ax.axhline(-np.log10(sig_p), linestyle="--", linewidth=1, color="black", alpha=0.55)
-        ax.axvline(sig_lfc, linestyle="--", linewidth=1, color="black", alpha=0.55)
-        ax.axvline(-sig_lfc, linestyle="--", linewidth=1, color="black", alpha=0.55)
-
-        sig = df[df["direction"] != "Not significant"].copy()
-
-        if not sig.empty:
-            label_df = sig.sort_values(
-                ["pvals_adj", "logfoldchanges"],
-                ascending=[True, False],
-                kind="mergesort",
-            ).head(annotate_top_n)
-        else:
-            label_df = df.sort_values(
-                ["pvals_adj", "logfoldchanges"],
-                ascending=[True, False],
-                kind="mergesort",
-            ).head(annotate_top_n)
+        ax.axvline(
+            lfc_cutoff,
+            linestyle="--",
+            linewidth=1.0,
+            color="black",
+            alpha=0.5,
+        )
+        ax.axvline(
+            -lfc_cutoff,
+            linestyle="--",
+            linewidth=1.0,
+            color="black",
+            alpha=0.5,
+        )
+        ax.axhline(
+            -np.log10(padj_cutoff),
+            linestyle="--",
+            linewidth=1.0,
+            color="black",
+            alpha=0.5,
+        )
 
         texts = []
+
         for _, row in label_df.iterrows():
-            texts.append(
-                ax.text(
-                    row["logfoldchanges"],
-                    row["neglog10_padj"],
-                    row["names"],
-                    fontsize=8,
-                    weight="bold",
-                )
-            )
-
-        if has_adjust_text and texts:
-            adjust_text(
-                texts,
-                ax=ax,
-                arrowprops=dict(
-                    arrowstyle="-",
-                    color="black",
-                    lw=0.5,
-                    alpha=0.6,
+            text = ax.text(
+                row["x_plot"],
+                row["y_plot"],
+                row["display_gene"],
+                fontsize=8.5,
+                fontweight="bold",
+                ha="center",
+                va="bottom",
+                bbox=dict(
+                    boxstyle="round,pad=0.18",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.78,
                 ),
-                expand_points=(1.2, 1.3),
-                expand_text=(1.2, 1.3),
             )
+            texts.append(text)
 
-        ax.set_title(title, fontsize=17, pad=14, weight="bold")
-        ax.set_xlabel("Log fold change", fontsize=12)
-        ax.set_ylabel("-log10 adjusted p-value", fontsize=12)
+        if texts:
+            try:
+                from adjustText import adjust_text
+
+                adjust_text(
+                    texts,
+                    ax=ax,
+                    expand_text=(1.08, 1.20),
+                    expand_points=(1.05, 1.15),
+                    force_text=(0.20, 0.35),
+                    force_points=(0.05, 0.10),
+                    only_move={"points": "y", "text": "xy"},
+                    lim=200,
+                )
+            except Exception:
+                pass
+
+        # --------------------------------------------------
+        # Titles and labels
+        # --------------------------------------------------
+        ax.set_title(
+            str(title),
+            fontsize=15,
+            fontweight="bold",
+            pad=16,
+        )
 
         ax.text(
-            0.02,
-            0.98,
+            0.5,
+            1.01,
+            f"Positive logFC = higher in {group2}; negative logFC = higher in {group1}",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+        ax.set_xlabel("log2 fold change", fontsize=12)
+        ax.set_ylabel("-log10 adjusted p-value", fontsize=12)
+
+        ax.set_xlim(-x_cap * 1.08, x_cap * 1.08)
+        ax.set_ylim(-0.5, y_cap * 1.08)
+
+        ax.legend(
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            frameon=True,
+            fontsize=10,
+            borderaxespad=0.0,
+        )
+
+        ax.grid(True, alpha=0.18, linewidth=0.6)
+
+        ax.text(
+            0.015,
+            0.985,
             (
-                f"Upregulated: {up_n:,}\n"
-                f"Downregulated: {down_n:,}\n"
-                f"FDR < {sig_p}, |logFC| ≥ {sig_lfc}"
+                f"FDR < {padj_cutoff}, |logFC| ≥ {lfc_cutoff}\n"
+                f"Display capped at |logFC| ≤ {x_cap:.1f}, -log10 FDR ≤ {y_cap:.1f}"
             ),
             transform=ax.transAxes,
-            va="top",
             ha="left",
-            fontsize=9,
+            va="top",
+            fontsize=8.5,
             bbox=dict(
-                boxstyle="round,pad=0.35",
-                fc="white",
-                ec="lightgrey",
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                edgecolor="#BDBDBD",
                 alpha=0.9,
             ),
         )
 
-        ax.legend(frameon=False, fontsize=9, loc="center right")
+        fig.tight_layout(rect=[0, 0, 0.82, 1])
 
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.grid(alpha=0.18)
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
-        fig.tight_layout()
-        return self._save(fig, filename)
+        print(f"Saved figure: {output_path}")
+        return output_path
 
     def pseudobulk_heatmap(
         self,
