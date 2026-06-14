@@ -295,6 +295,11 @@ class PseudobulkDE:
 
         Positive logfoldchanges mean higher expression in `case`
         compared with `reference`.
+
+        Output columns:
+        - names: readable gene symbol used by reports/plots
+        - gene_symbol: readable gene symbol
+        - gene_id: original var_name, often Ensembl ID
         """
 
         if pb_adata is None:
@@ -333,9 +338,67 @@ class PseudobulkDE:
         if int(expressed.sum()) == 0:
             raise ValueError("No genes passed pseudobulk expression filtering.")
 
-        genes_all = np.asarray(pb_adata.var_names.astype(str))
-        genes = genes_all[expressed]
+        # --------------------------------------------------
+        # Gene IDs and readable symbols
+        # --------------------------------------------------
+        gene_ids_all = np.asarray(pb_adata.var_names.astype(str))
+        gene_ids = gene_ids_all[expressed]
 
+        symbol_col = None
+
+        for candidate in [
+            "gene_symbol",
+            "feature_name",
+            "symbol",
+            "gene_name",
+            "name",
+        ]:
+            if candidate in pb_adata.var.columns:
+                symbol_col = candidate
+                break
+
+        if symbol_col is not None:
+            raw_symbols_all = np.asarray(pb_adata.var[symbol_col].astype(str))
+            raw_symbols = raw_symbols_all[expressed]
+        else:
+            raw_symbols = gene_ids.copy()
+
+        def clean_symbol(symbol, fallback):
+            symbol = str(symbol).strip()
+            fallback = str(fallback).strip()
+
+            bad_values = {
+                "",
+                "nan",
+                "none",
+                "null",
+                "na",
+                "n/a",
+                "NA",
+                "None",
+                "NULL",
+            }
+
+            if symbol in bad_values:
+                return fallback
+
+            return symbol
+
+        gene_symbols = np.asarray(
+            [
+                clean_symbol(symbol, fallback)
+                for symbol, fallback in zip(raw_symbols, gene_ids)
+            ],
+            dtype=object,
+        )
+
+        # Use readable symbols in the main `names` column.
+        # Keep gene_id separately so Ensembl IDs are not lost.
+        gene_names = gene_symbols.copy()
+
+        # --------------------------------------------------
+        # Expression filtering and logCPM transform
+        # --------------------------------------------------
         counts_f = counts[:, expressed]
         logcpm = self._logcpm(counts_f)
 
@@ -368,7 +431,9 @@ class PseudobulkDE:
 
         df = pd.DataFrame(
             {
-                "names": genes,
+                "names": gene_names,
+                "gene_symbol": gene_symbols,
+                "gene_id": gene_ids,
                 "scores": scores,
                 "logfoldchanges": logfc,
                 "pvals": pvals,
@@ -383,6 +448,10 @@ class PseudobulkDE:
                 "n_reference_samples": n_ref,
             }
         )
+
+        df["names"] = df["names"].astype(str)
+        df["gene_symbol"] = df["gene_symbol"].astype(str)
+        df["gene_id"] = df["gene_id"].astype(str)
 
         df["abs_logfoldchanges"] = df["logfoldchanges"].abs()
 

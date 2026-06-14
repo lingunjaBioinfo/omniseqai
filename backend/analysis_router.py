@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
+from backend.gene_symbol_utils import ensure_de_gene_symbols
+from backend.signature_genes import find_signature_hits, format_signature_hits
 from backend.pseudobulk_de import PseudobulkDE
 
 
@@ -410,14 +412,28 @@ class AnalysisRouter:
         if de_results is None or de_results.empty:
             return ["No differential expression results available."]
 
-        required = {"names", "logfoldchanges", "pvals_adj"}
+        hits = find_signature_hits(
+            de_results,
+            gene_col="names",
+            lfc_col="logfoldchanges",
+            padj_col="pvals_adj",
+            padj_cutoff=0.05,
+            lfc_cutoff=0.5,
+        )
 
-        if not required.issubset(set(de_results.columns)):
-            return ["Differential expression table is missing required columns."]
+        lines = format_signature_hits(hits, max_genes_per_signature=15)
+
+        if lines:
+            return lines
 
         df = de_results.copy()
+
+        required = {"names", "logfoldchanges", "pvals_adj"}
+
+        if not required.issubset(set(df.columns)):
+            return ["Differential expression table is missing required columns."]
+
         df["names"] = df["names"].astype(str)
-        df["gene_upper"] = df["names"].str.upper()
         df["logfoldchanges"] = pd.to_numeric(df["logfoldchanges"], errors="coerce")
         df["pvals_adj"] = pd.to_numeric(df["pvals_adj"], errors="coerce")
 
@@ -426,157 +442,24 @@ class AnalysisRouter:
             & (df["logfoldchanges"] > 0.5)
         ].copy()
 
-        sig_down = df[
-            (df["pvals_adj"] < 0.05)
-            & (df["logfoldchanges"] < -0.5)
-        ].copy()
+        if sig_up.empty:
+            return ["No strong condition-specific pathway signature identified."]
 
-        up_genes = set(sig_up["gene_upper"].tolist())
-        down_genes = set(sig_down["gene_upper"].tolist())
-
-        interferon_genes = {
-            "ISG15",
-            "ISG20",
-            "IFIT1",
-            "IFIT2",
-            "IFIT3",
-            "IFI6",
-            "IFI27",
-            "IFI35",
-            "IFI44",
-            "IFI44L",
-            "MX1",
-            "MX2",
-            "OAS1",
-            "OAS2",
-            "OAS3",
-            "OASL",
-            "STAT1",
-            "STAT2",
-            "IRF7",
-            "IRF9",
-            "DDX58",
-            "IFIH1",
-            "HERC5",
-            "HERC6",
-            "UBE2L6",
-            "BST2",
-            "RSAD2",
-            "EPSTI1",
-            "TRIM14",
-            "BATF2",
-            "CXCL10",
-            "ZBP1",
-            "GBP1",
-            "GBP2",
-            "GBP4",
-            "GBP5",
-            "WARS",
-            "PARP14",
-            "SP110",
-            "DDX60",
-        }
-
-        inflammatory_genes = {
-            "IL1B",
-            "IL6",
-            "TNF",
-            "CXCL8",
-            "IL8",
-            "CCL2",
-            "CCL3",
-            "CCL4",
-            "CCL8",
-            "NFKBIA",
-            "NFKBIZ",
-            "JUN",
-            "FOS",
-            "CXCL10",
-        }
-
-        antigen_presentation_genes = {
-            "HLA-A",
-            "HLA-B",
-            "HLA-C",
-            "HLA-DRA",
-            "HLA-DRB1",
-            "HLA-DPA1",
-            "HLA-DPB1",
-            "HLA-E",
-            "B2M",
-            "TAP1",
-            "TAP2",
-        }
-
-        interpretation = []
-
-        if len(up_genes & interferon_genes) >= 2:
-            detected = sorted(up_genes & interferon_genes)[:15]
-            interpretation.append(
-                "Interferon-stimulated antiviral response is increased "
-                f"({', '.join(detected)})."
+        top_up = (
+            sig_up.sort_values(
+                ["pvals_adj", "logfoldchanges"],
+                ascending=[True, False],
             )
+            ["names"]
+            .astype(str)
+            .head(8)
+            .tolist()
+        )
 
-        if len(up_genes & inflammatory_genes) >= 2:
-            detected = sorted(up_genes & inflammatory_genes)[:15]
-            interpretation.append(
-                "Inflammatory cytokine/chemokine signaling is increased "
-                f"({', '.join(detected)})."
-            )
-
-        if len(up_genes & antigen_presentation_genes) >= 2:
-            detected = sorted(up_genes & antigen_presentation_genes)[:15]
-            interpretation.append(
-                "Antigen-presentation/MHC-related genes are increased "
-                f"({', '.join(detected)})."
-            )
-
-        if len(down_genes & interferon_genes) >= 2:
-            detected = sorted(down_genes & interferon_genes)[:15]
-            interpretation.append(
-                "Interferon-stimulated genes are decreased "
-                f"({', '.join(detected)})."
-            )
-
-        if not interpretation:
-            top_up = (
-                sig_up.sort_values(
-                    ["pvals_adj", "logfoldchanges"],
-                    ascending=[True, False],
-                )
-                ["names"]
-                .astype(str)
-                .head(8)
-                .tolist()
-            )
-
-            if top_up:
-                interpretation.append(
-                    "Differential expression detected, but no predefined pathway "
-                    "signature dominated the top ranked genes. "
-                    f"Top increased genes include: {', '.join(top_up)}."
-                )
-            else:
-                interpretation.append(
-                    "No strong condition-specific pathway signature identified."
-                )
-
-        return interpretation
-
-    def _finalize_pairwise_result_dict(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        de_results = result.get("de_results")
-
-        if de_results is None or de_results.empty:
-            result["n_sig_genes"] = 0
-            result["interpretation"] = [
-                "No differential expression results available."
-            ]
-            return result
-
-        result["n_sig_genes"] = self._count_sig_genes(de_results)
-        result["interpretation"] = self._basic_de_interpretation(de_results)
-
-        return result
+        return [
+            "Differential expression detected, but no predefined pathway "
+            f"signature dominated the ranked genes. Top increased genes include: {', '.join(top_up)}."
+        ]
 
     # ------------------------------------------------------------------
     # Fallback DE
@@ -764,6 +647,8 @@ class AnalysisRouter:
                 n_genes=None,          # keep full table
             )
 
+            de_results = ensure_de_gene_symbols(de_results, adata_pair)
+
             result["mode"] = "pseudobulk"
             result["status"] = "ok"
             result["error"] = None
@@ -809,7 +694,7 @@ class AnalysisRouter:
                 condition_key=condition_key,
                 n_genes=n_genes,
             )
-
+            de_results = ensure_de_gene_symbols(de_results, adata_pair)
             result["mode"] = "cell_level_fallback"
             result["status"] = "ok"
             result["error"] = f"Pseudobulk failed: {pseudobulk_error}"
