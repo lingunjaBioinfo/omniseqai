@@ -803,16 +803,20 @@ class ReportFigures:
             try:
                 from adjustText import adjust_text
 
-                adjust_text(
-                    texts,
-                    ax=ax,
-                    expand_text=(1.08, 1.20),
-                    expand_points=(1.05, 1.15),
-                    force_text=(0.20, 0.35),
-                    force_points=(0.05, 0.10),
-                    only_move={"points": "y", "text": "xy"},
-                    lim=200,
-                )
+                import contextlib
+                import io
+
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    adjust_text(
+                        texts,
+                        ax=ax,
+                        expand_text=(1.08, 1.20),
+                        expand_points=(1.05, 1.15),
+                        force_text=(0.20, 0.35),
+                        force_points=(0.05, 0.10),
+                        only_move={"points": "y", "text": "xy"},
+                        lim=200,
+                    )
             except Exception:
                 pass
 
