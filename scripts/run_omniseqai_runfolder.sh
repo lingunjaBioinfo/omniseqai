@@ -52,6 +52,9 @@ mkdir -p "$RUN_DIR/logs"
 mkdir -p "$RUN_DIR/metadata"
 mkdir -p "$RUN_DIR/tables"
 
+rm -rf "$RUN_DIR/figures"/*
+rm -rf "$RUN_DIR/tables"/*
+
 REPORT_TXT="$RUN_DIR/report.txt"
 REPORT_PDF="$RUN_DIR/report.pdf"
 LOG_FILE="$RUN_DIR/logs/run.log"
@@ -69,7 +72,10 @@ echo ""
 # the current run folder.
 # ------------------------------------------------------------
 mkdir -p outputs/report_figures
+mkdir -p outputs/tables
+
 rm -f outputs/report_figures/*.png
+rm -rf outputs/tables/*
 
 # ------------------------------------------------------------
 # Run OmniSeqAI.
@@ -88,6 +94,10 @@ python run_omniseqai.py \
 # ------------------------------------------------------------
 if [[ -d "outputs/report_figures" ]]; then
   find outputs/report_figures -maxdepth 1 -type f -name "*.png" -exec cp -f {} "$RUN_DIR/figures/" \;
+fi
+if [[ -d "outputs/tables" ]]; then
+  rm -rf "$RUN_DIR/tables"/*
+  cp -a outputs/tables/. "$RUN_DIR/tables/"
 fi
 
 # ------------------------------------------------------------

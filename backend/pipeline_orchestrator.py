@@ -11,6 +11,7 @@ from backend.router_report import RouterReport
 from backend.router_pdf_report import RouterPDFReport
 from backend.report_figures import ReportFigures
 
+from backend.table_exporter import TableExporter
 from backend.pipeline import SingleCellPipeline
 from backend.annotation import CellAnnotator
 from backend.markers import MarkerAnalyzer
@@ -36,6 +37,7 @@ class PipelineOrchestrator:
         self.reporter = RouterReport()
         self.pdf_reporter = RouterPDFReport()
         self.figures = ReportFigures()
+        self.table_exporter = TableExporter()
 
     def run(
         self,
@@ -157,7 +159,7 @@ class PipelineOrchestrator:
                 break
 
             results["figure_paths"] = figure_paths
-
+            results["table_paths"] = self.table_exporter.export(results)
             report_text = self.reporter.build(results)
             self.reporter.save(
                 report_text,
@@ -463,6 +465,9 @@ class PipelineOrchestrator:
                     },
                 }
             )
+
+            results["table_paths"] = self.table_exporter.export(results)
+
             report_text = self.reporter.build(results)
             self.reporter.save(
                 report_text,
