@@ -18,7 +18,7 @@ from backend.markers import MarkerAnalyzer
 from backend.pathway_analysis import PathwayAnalyzer
 from backend.conclusion_engine import ConclusionEngine
 from backend.cell_communication import CellCommunication
-
+from backend.report_table_utils import append_table_section
 
 class PipelineOrchestrator:
     """
@@ -161,6 +161,7 @@ class PipelineOrchestrator:
             results["figure_paths"] = figure_paths
             results["table_paths"] = self.table_exporter.export(results)
             report_text = self.reporter.build(results)
+            report_text = append_table_section(report_text, results)
             self.reporter.save(
                 report_text,
                 report_txt
@@ -469,6 +470,7 @@ class PipelineOrchestrator:
             results["table_paths"] = self.table_exporter.export(results)
 
             report_text = self.reporter.build(results)
+            report_text = append_table_section(report_text, results)
             self.reporter.save(
                 report_text,
                 report_txt

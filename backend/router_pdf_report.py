@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional, Sequence, Union
+from xml.sax.saxutils import escape
 
 import pandas as pd
 
@@ -20,6 +21,7 @@ from reportlab.platypus import (
     Image,
 )
 
+from backend.report_table_utils import format_table_section
 
 class RouterPDFReport:
 
@@ -133,6 +135,61 @@ class RouterPDFReport:
         for item in items:
             flow.append(Paragraph(f"• {self._safe(item)}", self.body))
             flow.append(Spacer(1, 0.035 * inch))
+        return flow
+
+    def _table_section(self, results: Dict[str, Any]):
+        """
+        Build the exported-tables section for the PDF report.
+        """
+
+        section_text = format_table_section(results)
+
+        if not section_text:
+            return []
+
+        flow = []
+
+        flow.append(Paragraph("Tables Generated", self.h1))
+        flow.append(
+            Paragraph(
+                "The following machine-readable result tables were exported for downstream analysis.",
+                self.body,
+            )
+        )
+        flow.append(Spacer(1, 0.08 * inch))
+
+        for raw_line in section_text.splitlines():
+            line = raw_line.strip()
+
+            if not line:
+                continue
+
+            if line == "Tables Generated":
+                continue
+
+            if set(line) == {"-"}:
+                continue
+
+            if line.startswith("The following machine-readable"):
+                continue
+
+            if line.startswith("- "):
+                item = line[2:].strip()
+
+                if ": " in item:
+                    path, description = item.split(": ", 1)
+                    paragraph_text = (
+                        f"• <b>{escape(path)}</b>: {escape(description)}"
+                    )
+                else:
+                    paragraph_text = f"• {escape(item)}"
+
+                flow.append(Paragraph(paragraph_text, self.body))
+                flow.append(Spacer(1, 0.035 * inch))
+
+        if len(flow) <= 3:
+            return []
+
         return flow
 
     def _build_from_results(self, results: Dict[str, Any]):
@@ -348,6 +405,12 @@ class RouterPDFReport:
 
             story.append(Spacer(1, 0.12 * inch))
 
+        table_flow = self._table_section(results)
+
+        if table_flow:
+            story.append(PageBreak())
+            story.extend(table_flow)
+
         story.append(PageBreak())
 
         story.append(Paragraph("Methods", self.h1))
@@ -356,6 +419,7 @@ class RouterPDFReport:
             "Condition analysis used pseudobulk aggregation when sample-level metadata was available.",
             "Differential expression was performed on condition contrasts selected by the comparison policy.",
             "Reported gene tables exclude obvious unmapped taxonomy identifiers where possible.",
+            "Exported CSV and JSON tables are saved in the run folder for downstream analysis.",
             "Pathway enrichment is optional and disabled by default to avoid blocking report generation on remote web services.",
         ]
         story.extend(self._bullets(methods))
