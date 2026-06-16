@@ -40,6 +40,7 @@ class TableExporter:
         self._export_celltype_specific_de(results, outdir, table_paths)
         self._export_marker_genes(results, outdir, table_paths)
         self._export_celltype_counts(results, outdir, table_paths)
+        self._export_integration_qc(results, outdir, table_paths)
 
         return table_paths
 
@@ -337,3 +338,36 @@ class TableExporter:
             prop_path = outdir / "celltype_proportions_by_condition.csv"
             proportions.to_csv(prop_path)
             table_paths["celltype_proportions_by_condition"] = str(prop_path)
+
+    # --------------------------------------------------
+    # Integration / batch-aware QC
+    # --------------------------------------------------
+    def _export_integration_qc(
+        self,
+        results: Dict[str, Any],
+        outdir: Path,
+        table_paths: Dict[str, str],
+    ) -> None:
+        integration_qc = results.get("integration_qc", {}) or {}
+
+        tables = integration_qc.get("tables", {}) or {}
+
+        if not tables:
+            return
+
+        int_dir = outdir / "integration_qc"
+        int_dir.mkdir(parents=True, exist_ok=True)
+
+        for name, table in tables.items():
+            if not self._is_dataframe(table):
+                continue
+
+            if table.empty:
+                continue
+
+            safe_name = self._safe_name(name)
+            path = int_dir / f"{safe_name}.csv"
+
+            table.to_csv(path, index=True)
+
+            table_paths[f"integration_qc.{safe_name}"] = str(path)

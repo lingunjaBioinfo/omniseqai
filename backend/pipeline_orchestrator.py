@@ -11,6 +11,7 @@ from backend.router_report import RouterReport
 from backend.router_pdf_report import RouterPDFReport
 from backend.report_figures import ReportFigures
 
+from backend.integration_qc import IntegrationQC
 from backend.table_exporter import TableExporter
 from backend.pipeline import SingleCellPipeline
 from backend.annotation import CellAnnotator
@@ -38,6 +39,7 @@ class PipelineOrchestrator:
         self.pdf_reporter = RouterPDFReport()
         self.figures = ReportFigures()
         self.table_exporter = TableExporter()
+        self.integration_qc = IntegrationQC()
 
     def run(
         self,
@@ -71,6 +73,18 @@ class PipelineOrchestrator:
             "decision": decision,
             "adata": adata,
         }
+
+        integration_qc = self.integration_qc.run(
+            adata,
+            profile=profile,
+            attempt_integration=True,
+        )
+
+        results["integration_qc"] = integration_qc
+
+        if integration_qc.get("status") in {"integrated", "qc_only"}:
+            print(f"Integration/QC status: {integration_qc.get('status')}")
+            print(f"Integration/QC message: {integration_qc.get('message')}")
 
         # ==================================================
         # CONDITION MODE

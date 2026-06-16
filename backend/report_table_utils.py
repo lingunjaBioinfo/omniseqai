@@ -61,6 +61,24 @@ def _describe_table(key: str, path: str) -> str:
             return "All exploratory marker genes across groups."
         return "Exploratory marker genes for one group or cluster."
 
+    if "integration_qc" in key_lower or "/integration_qc/" in path_lower:
+        if "sample_counts" in key_lower or "sample_counts" in path_lower:
+            return "Cell counts per sample."
+        if "batch_counts" in key_lower or "batch_counts" in path_lower:
+            return "Cell counts per batch."
+        if "condition_counts" in key_lower or "condition_counts" in path_lower:
+            return "Cell counts per condition."
+        if "sample_condition_counts" in key_lower or "sample_condition_counts" in path_lower:
+            return "Sample-by-condition cell count matrix."
+        if "batch_condition_counts" in key_lower or "batch_condition_counts" in path_lower:
+            return "Batch-by-condition cell count matrix."
+        if "sample_qc_summary" in key_lower or "sample_qc_summary" in path_lower:
+            return "Sample-level QC summary statistics."
+        if "batch_qc_summary" in key_lower or "batch_qc_summary" in path_lower:
+            return "Batch-level QC summary statistics."
+        return "Multi-sample or batch-aware QC table."
+
+
     if path_lower.endswith(".csv"):
         return "Exported CSV analysis table."
 
@@ -80,6 +98,7 @@ def _ordered_table_items(table_paths: Dict[str, str]) -> List[tuple[str, str]]:
         "celltype_counts",
         "celltype_counts_by_condition",
         "celltype_proportions_by_condition",
+        "integration_qc",
         "condition_de",
         "celltype_specific",
         "marker_genes",
