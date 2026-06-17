@@ -20,6 +20,7 @@ from backend.pathway_analysis import PathwayAnalyzer
 from backend.conclusion_engine import ConclusionEngine
 from backend.cell_communication import CellCommunication
 from backend.report_table_utils import append_table_section
+from backend.integration_report_utils import append_integration_section
 
 class PipelineOrchestrator:
     """
@@ -172,9 +173,65 @@ class PipelineOrchestrator:
                 # Only one primary whole-dataset comparison for now.
                 break
 
+            # --------------------------------------------------
+            # Integration / batch-aware UMAP figures
+            # --------------------------------------------------
+            integration_qc = results.get("integration_qc", {}) or {}
+
+            sample_col = integration_qc.get("sample_col")
+            batch_col = integration_qc.get("batch_col")
+            condition_col = integration_qc.get("condition_col")
+
+            # Original-space UMAPs colored by sample/batch where available.
+            if adata_out is not None and "X_umap" in adata_out.obsm:
+                if sample_col and sample_col in adata_out.obs.columns:
+                    figure_paths["umap_sample"] = self.figures.umap_with_labels(
+                        adata_out,
+                        label_col=sample_col,
+                        title="UMAP colored by sample",
+                        filename="umap_sample.png",
+                    )
+
+                if batch_col and batch_col in adata_out.obs.columns:
+                    figure_paths["umap_batch"] = self.figures.umap_with_labels(
+                        adata_out,
+                        label_col=batch_col,
+                        title="UMAP colored by batch",
+                        filename="umap_batch.png",
+                    )
+
+            # Integrated-space UMAPs when optional integration succeeds.
+            integrated_adata = integration_qc.get("integrated_adata")
+
+            if integrated_adata is not None and "X_umap" in integrated_adata.obsm:
+                if sample_col and sample_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_sample"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=sample_col,
+                        title="Integrated UMAP colored by sample",
+                        filename="umap_integrated_sample.png",
+                    )
+
+                if batch_col and batch_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_batch"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=batch_col,
+                        title="Integrated UMAP colored by batch",
+                        filename="umap_integrated_batch.png",
+                    )
+
+                if condition_col and condition_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_condition"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=condition_col,
+                        title="Integrated UMAP colored by condition",
+                        filename="umap_integrated_condition.png",
+                    )
+
             results["figure_paths"] = figure_paths
             results["table_paths"] = self.table_exporter.export(results)
             report_text = self.reporter.build(results)
+            report_text = append_integration_section(report_text, results)
             report_text = append_table_section(report_text, results)
             self.reporter.save(
                 report_text,
@@ -463,6 +520,59 @@ class PipelineOrchestrator:
                     )
 
             # --------------------------------------------------
+            # Integration / batch-aware UMAP figures
+            # --------------------------------------------------
+            integration_qc = results.get("integration_qc", {}) or {}
+
+            sample_col = integration_qc.get("sample_col")
+            batch_col = integration_qc.get("batch_col")
+            condition_col = integration_qc.get("condition_col")
+
+            if "X_umap" in adata.obsm:
+                if sample_col and sample_col in adata.obs.columns:
+                    figure_paths["umap_sample"] = self.figures.umap_with_labels(
+                        adata,
+                        label_col=sample_col,
+                        title="UMAP colored by sample",
+                        filename="umap_sample.png",
+                    )
+
+                if batch_col and batch_col in adata.obs.columns:
+                    figure_paths["umap_batch"] = self.figures.umap_with_labels(
+                        adata,
+                        label_col=batch_col,
+                        title="UMAP colored by batch",
+                        filename="umap_batch.png",
+                    )
+
+            integrated_adata = integration_qc.get("integrated_adata")
+
+            if integrated_adata is not None and "X_umap" in integrated_adata.obsm:
+                if sample_col and sample_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_sample"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=sample_col,
+                        title="Integrated UMAP colored by sample",
+                        filename="umap_integrated_sample.png",
+                    )
+
+                if batch_col and batch_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_batch"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=batch_col,
+                        title="Integrated UMAP colored by batch",
+                        filename="umap_integrated_batch.png",
+                    )
+
+                if condition_col and condition_col in integrated_adata.obs.columns:
+                    figure_paths["umap_integrated_condition"] = self.figures.umap_with_labels(
+                        integrated_adata,
+                        label_col=condition_col,
+                        title="Integrated UMAP colored by condition",
+                        filename="umap_integrated_condition.png",
+                    )
+
+            # --------------------------------------------------
             # Store results
             # --------------------------------------------------
             results.update(
@@ -484,6 +594,7 @@ class PipelineOrchestrator:
             results["table_paths"] = self.table_exporter.export(results)
 
             report_text = self.reporter.build(results)
+            report_text = append_integration_section(report_text, results)
             report_text = append_table_section(report_text, results)
             self.reporter.save(
                 report_text,

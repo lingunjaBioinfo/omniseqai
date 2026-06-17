@@ -22,6 +22,7 @@ from reportlab.platypus import (
 )
 
 from backend.report_table_utils import format_table_section
+from backend.integration_report_utils import format_integration_section
 
 class RouterPDFReport:
 
@@ -192,6 +193,44 @@ class RouterPDFReport:
 
         return flow
 
+    def _integration_qc_section(self, results: Dict[str, Any]):
+        """
+        Build the integration/QC section for the PDF report.
+        """
+
+        section_text = format_integration_section(results)
+
+        if not section_text:
+            return []
+
+        flow = []
+
+        lines = [line.strip() for line in section_text.splitlines() if line.strip()]
+
+        flow.append(Paragraph("Integration and Batch QC", self.h1))
+
+        for line in lines:
+            if line == "Integration and Batch QC":
+                continue
+
+            if set(line) == {"-"}:
+                continue
+
+            if ":" in line and not line.startswith("Interpretation:"):
+                key, value = line.split(":", 1)
+                paragraph_text = f"<b>{escape(key.strip())}</b>: {escape(value.strip())}"
+                flow.append(Paragraph(paragraph_text, self.body))
+                flow.append(Spacer(1, 0.035 * inch))
+
+            elif line.startswith("Interpretation:"):
+                flow.append(Spacer(1, 0.08 * inch))
+                flow.append(Paragraph(escape(line), self.body))
+
+            else:
+                flow.append(Paragraph(escape(line), self.body))
+
+        return flow
+
     def _build_from_results(self, results: Dict[str, Any]):
         styles = getSampleStyleSheet()
 
@@ -318,6 +357,26 @@ class RouterPDFReport:
                 "Figure 3. Cell-type proportions across conditions.",
             ),
             (
+                "umap_sample",
+                "UMAP colored by sample.",
+            ),
+            (
+                "umap_batch",
+                "UMAP colored by batch.",
+            ),
+            (
+                "umap_integrated_sample",
+                "Integrated UMAP colored by sample.",
+            ),
+            (
+                "umap_integrated_batch",
+                "Integrated UMAP colored by batch.",
+            ),
+            (
+                "umap_integrated_condition",
+                "Integrated UMAP colored by condition.",
+            ),
+            (
                 "volcano",
                 "Figure 4. Volcano plot showing condition-associated differential expression.",
             ),
@@ -404,6 +463,12 @@ class RouterPDFReport:
                 story.extend(self._bullets(interpretation))
 
             story.append(Spacer(1, 0.12 * inch))
+
+        integration_flow = self._integration_qc_section(results)
+
+        if integration_flow:
+            story.append(PageBreak())
+            story.extend(integration_flow)
 
         table_flow = self._table_section(results)
 

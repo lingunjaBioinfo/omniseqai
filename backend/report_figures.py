@@ -298,6 +298,81 @@ class ReportFigures:
         fig.tight_layout()
         return self._save(fig, "umap_celltype_annotated.png")
 
+    def umap_with_labels(
+        self,
+        adata,
+        label_col: str,
+        title: str = None,
+        filename: str = "umap_labels.png",
+        point_size: float = 8,
+    ):
+        """
+        Generic UMAP plot colored by any obs column.
+
+        Used for:
+        - sample-colored UMAP
+        - batch-colored UMAP
+        - integrated sample-colored UMAP
+        - integrated batch-colored UMAP
+        - integrated condition-colored UMAP
+        """
+
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+        import scanpy as sc
+
+        if adata is None:
+            print("No AnnData object available for UMAP plotting.")
+            return None
+
+        if "X_umap" not in adata.obsm:
+            print("No UMAP found.")
+            return None
+
+        if label_col is None or label_col not in adata.obs.columns:
+            print(f"UMAP label column not found: {label_col}")
+            return None
+
+        output_dir = Path(getattr(self, "output_dir", "outputs/report_figures"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_path = output_dir / filename
+
+        plot_title = title or f"UMAP colored by {label_col}"
+
+        try:
+            fig, ax = plt.subplots(figsize=(7.5, 5.8), dpi=150)
+
+            sc.pl.umap(
+                adata,
+                color=label_col,
+                ax=ax,
+                show=False,
+                size=point_size,
+                frameon=False,
+                title=plot_title,
+            )
+
+            legend = ax.get_legend()
+
+            if legend is not None:
+                legend.set_bbox_to_anchor((1.04, 1.0))
+                legend._loc = 2
+
+            fig.tight_layout()
+            fig.savefig(output_path, bbox_inches="tight")
+            plt.close(fig)
+
+            print(f"Saved figure: {output_path}")
+
+            return str(output_path)
+
+        except Exception as e:
+            plt.close("all")
+            print(f"Failed to generate UMAP for {label_col}: {e}")
+            return None
+
     def celltype_proportions(
         self,
         adata,

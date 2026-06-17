@@ -61,13 +61,7 @@ def _describe_table(key: str, path: str) -> str:
             return "All exploratory marker genes across groups."
         return "Exploratory marker genes for one group or cluster."
 
-    if "integration_qc" in key_lower or "/integration_qc/" in path_lower:
-        if "sample_counts" in key_lower or "sample_counts" in path_lower:
-            return "Cell counts per sample."
-        if "batch_counts" in key_lower or "batch_counts" in path_lower:
-            return "Cell counts per batch."
-        if "condition_counts" in key_lower or "condition_counts" in path_lower:
-            return "Cell counts per condition."
+    if "integration_qc" in key_lower or "integration_qc" in path_lower:
         if "sample_condition_counts" in key_lower or "sample_condition_counts" in path_lower:
             return "Sample-by-condition cell count matrix."
         if "batch_condition_counts" in key_lower or "batch_condition_counts" in path_lower:
@@ -76,6 +70,12 @@ def _describe_table(key: str, path: str) -> str:
             return "Sample-level QC summary statistics."
         if "batch_qc_summary" in key_lower or "batch_qc_summary" in path_lower:
             return "Batch-level QC summary statistics."
+        if "sample_counts" in key_lower or "sample_counts" in path_lower:
+            return "Cell counts per sample."
+        if "batch_counts" in key_lower or "batch_counts" in path_lower:
+            return "Cell counts per batch."
+        if "condition_counts" in key_lower or "condition_counts" in path_lower:
+            return "Cell counts per condition."
         return "Multi-sample or batch-aware QC table."
 
 
