@@ -1,105 +1,49 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union
+from typing import List, Optional, Tuple
 
+import anndata as ad
 import pandas as pd
 import scanpy as sc
-from anndata import AnnData
 
 
-PathLike = Union[str, Path]
+SUPPORTED_SINGLE_FILE_SUFFIXES = {
+    ".h5ad",
+    ".h5",
+    ".loom",
+    ".csv",
+    ".tsv",
+    ".txt",
+}
 
 
-def _make_unique_and_preserve_symbols(adata: AnnData) -> AnnData:
+def load_input(input_path: str):
     """
-    Standardize AnnData after loading.
+    Load single-cell data from either:
 
-    Ensures:
-    - obs names are unique
-    - var names are unique
-    - feature_name exists for gene-symbol mapping later
-    """
+    1. A single file:
+       - .h5ad
+       - 10x .h5
+       - .loom
+       - .csv/.tsv/.txt expression matrix
 
-    adata.obs_names_make_unique()
-    adata.var_names_make_unique()
+    2. A 10x MTX directory:
+       - matrix.mtx / matrix.mtx.gz
+       - barcodes.tsv / barcodes.tsv.gz
+       - features.tsv or genes.tsv
 
-    if "feature_name" not in adata.var.columns:
-        adata.var["feature_name"] = adata.var_names.astype(str)
+    3. A multi-sample directory:
+       - sample_1/sample_1.h5ad
+       - sample_2/sample_2.h5ad
+       - sample_3/filtered_feature_bc_matrix/
+       - or direct files inside one folder
 
-    return adata
-
-
-def _read_csv_or_tsv(path: Path) -> AnnData:
-    """
-    Read a simple expression matrix.
-
-    Expected common layout:
-    - rows = genes
-    - columns = cells/samples
-
-    OmniSeqAI expects:
-    - rows = cells
-    - columns = genes
-
-    So this loader transposes the matrix by default.
-    """
-
-    sep = "," if path.suffix.lower() == ".csv" else "\t"
-
-    df = pd.read_csv(path, sep=sep, index_col=0)
-
-    if df.empty:
-        raise ValueError(f"Expression matrix is empty: {path}")
-
-    # Convert all values to numeric where possible.
-    df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
-
-    # Most expression matrices are genes x cells, so transpose.
-    adata = AnnData(df.T)
-
-    adata.var["feature_name"] = adata.var_names.astype(str)
-
-    return adata
-
-
-def _is_10x_mtx_folder(path: Path) -> bool:
-    """
-    Detect a 10x-style matrix folder.
-
-    Supports compressed and uncompressed names.
-    """
-
-    required_any = [
-        ["matrix.mtx", "matrix.mtx.gz"],
-        ["barcodes.tsv", "barcodes.tsv.gz"],
-        ["features.tsv", "features.tsv.gz", "genes.tsv", "genes.tsv.gz"],
-    ]
-
-    names = {p.name for p in path.iterdir()}
-
-    for options in required_any:
-        if not any(option in names for option in options):
-            return False
-
-    return True
-
-
-def load_input(input_path: PathLike) -> AnnData:
-    """
-    Load supported single-cell input formats into AnnData.
-
-    Supported:
-    - .h5ad
-    - 10x .h5
-    - 10x mtx folder
-    - .loom
-    - .csv
-    - .tsv
-    - .txt
-
-    Returns:
-    - AnnData object
+    Multi-sample directories are concatenated into one AnnData object with:
+       - sample_id
+       - batch_id
+       - source_file
+       - condition, if inferable or already present
     """
 
     path = Path(input_path).expanduser().resolve()
@@ -107,68 +51,389 @@ def load_input(input_path: PathLike) -> AnnData:
     if not path.exists():
         raise FileNotFoundError(f"Input path does not exist: {path}")
 
-    # --------------------------------------------------
-    # 10x matrix directory
-    # --------------------------------------------------
     if path.is_dir():
-        if _is_10x_mtx_folder(path):
-            print(f"Detected 10x matrix folder: {path}")
+        if _looks_like_10x_mtx_dir(path):
+            print(f"Detected format: 10x_mtx_directory")
+            adata = sc.read_10x_mtx(str(path), var_names="gene_symbols", cache=False)
+            adata = _finalize_adata(adata)
+            return adata
 
-            adata = sc.read_10x_mtx(
-                str(path),
+        print(f"Detected format: multi_sample_directory")
+        return _load_multi_sample_directory(path)
+
+    detected = _detect_file_format(path)
+    print(f"Detected format: {detected}")
+
+    adata = _load_single_input(path)
+    adata = _finalize_adata(adata)
+
+    return adata
+
+
+# ---------------------------------------------------------------------
+# Single input loading
+# ---------------------------------------------------------------------
+def _detect_file_format(path: Path) -> str:
+    suffix = path.suffix.lower()
+
+    if suffix == ".h5ad":
+        return "h5ad"
+
+    if suffix == ".h5":
+        return "10x_h5"
+
+    if suffix == ".loom":
+        return "loom"
+
+    if suffix == ".csv":
+        return "csv_matrix"
+
+    if suffix == ".tsv":
+        return "tsv_matrix"
+
+    if suffix == ".txt":
+        return "txt_matrix"
+
+    raise ValueError(
+        f"Unsupported input file format: {path}. "
+        f"Supported suffixes: {sorted(SUPPORTED_SINGLE_FILE_SUFFIXES)}"
+    )
+
+
+def _load_single_input(path: Path):
+    suffix = path.suffix.lower()
+
+    if suffix == ".h5ad":
+        return sc.read_h5ad(str(path))
+
+    if suffix == ".h5":
+        return sc.read_10x_h5(str(path))
+
+    if suffix == ".loom":
+        return sc.read_loom(str(path))
+
+    if suffix in {".csv", ".tsv", ".txt"}:
+        return _load_expression_matrix(path)
+
+    raise ValueError(f"Unsupported input file format: {path}")
+
+
+def _load_expression_matrix(path: Path):
+    suffix = path.suffix.lower()
+
+    if suffix == ".csv":
+        df = pd.read_csv(path, index_col=0)
+
+    else:
+        df = pd.read_csv(path, index_col=0, sep="\t")
+
+    # Heuristic:
+    # If rows greatly exceed columns, assume genes x cells and transpose.
+    # AnnData expects cells x genes.
+    if df.shape[0] > df.shape[1]:
+        df = df.T
+
+    adata = ad.AnnData(df)
+
+    return adata
+
+
+# ---------------------------------------------------------------------
+# Multi-sample directory loading
+# ---------------------------------------------------------------------
+def _load_multi_sample_directory(root: Path):
+    sample_inputs = _discover_sample_inputs(root)
+
+    if not sample_inputs:
+        raise ValueError(
+            f"No supported single-cell inputs found inside directory: {root}"
+        )
+
+    adatas = []
+    sample_ids = []
+
+    for sample_id, sample_path in sample_inputs:
+        print(f"Loading sample: {sample_id} -> {sample_path}")
+
+        if sample_path.is_dir() and _looks_like_10x_mtx_dir(sample_path):
+            sample_adata = sc.read_10x_mtx(
+                str(sample_path),
                 var_names="gene_symbols",
                 cache=False,
             )
+        else:
+            sample_adata = _load_single_input(sample_path)
 
-            return _make_unique_and_preserve_symbols(adata)
+        sample_adata = _finalize_adata(sample_adata)
 
-        raise ValueError(
-            f"Unsupported directory format: {path}\n"
-            "Expected a 10x folder containing matrix.mtx, barcodes.tsv, and features.tsv/genes.tsv."
-        )
+        # loaded_sample_id records the file/folder we loaded from.
+        # Do not overwrite biological sample_id if it already exists.
+        sample_adata.obs["loaded_sample_id"] = str(sample_id)
+        sample_adata.obs["source_file"] = str(sample_path)
 
-    suffix = path.suffix.lower()
+        if (
+            "sample_id" not in sample_adata.obs.columns
+            or _obs_column_is_empty(sample_adata, "sample_id")
+        ):
+            sample_adata.obs["sample_id"] = str(sample_id)
 
-    # --------------------------------------------------
-    # AnnData
-    # --------------------------------------------------
-    if suffix == ".h5ad":
-        print("Detected format: h5ad")
-        adata = sc.read_h5ad(str(path))
-        return _make_unique_and_preserve_symbols(adata)
+        if (
+            "batch_id" not in sample_adata.obs.columns
+            or _obs_column_is_empty(sample_adata, "batch_id")
+        ):
+            sample_adata.obs["batch_id"] = str(sample_id)
 
-    # --------------------------------------------------
-    # 10x h5
-    # --------------------------------------------------
-    if suffix == ".h5":
-        print("Detected format: 10x h5")
+        if "condition" not in sample_adata.obs.columns:
+            inferred_condition = _infer_condition_from_name(sample_id)
 
-        try:
-            adata = sc.read_10x_h5(str(path))
-            return _make_unique_and_preserve_symbols(adata)
-        except Exception as e:
-            raise ValueError(
-                f"Could not read .h5 file as 10x h5: {path}\n"
-                f"Original error: {type(e).__name__}: {e}"
-            )
+            if inferred_condition is not None:
+                sample_adata.obs["condition"] = inferred_condition
+                sample_adata.obs["condition_raw"] = str(sample_id)
 
-    # --------------------------------------------------
-    # Loom
-    # --------------------------------------------------
-    if suffix == ".loom":
-        print("Detected format: loom")
-        adata = sc.read_loom(str(path))
-        return _make_unique_and_preserve_symbols(adata)
+        adatas.append(sample_adata)
+        sample_ids.append(sample_id)
 
-    # --------------------------------------------------
-    # CSV / TSV / TXT expression matrix
-    # --------------------------------------------------
-    if suffix in {".csv", ".tsv", ".txt"}:
-        print(f"Detected format: expression matrix ({suffix})")
-        adata = _read_csv_or_tsv(path)
-        return _make_unique_and_preserve_symbols(adata)
+    if len(adatas) == 1:
+        return _finalize_adata(adatas[0])
 
-    raise ValueError(
-        f"Unsupported input format: {path}\n"
-        "Supported formats: .h5ad, .h5, 10x mtx folder, .loom, .csv, .tsv, .txt"
+    print(f"Concatenating {len(adatas)} samples...")
+
+    combined = ad.concat(
+        adatas,
+        join="outer",
+        label="loaded_sample_id",
+        keys=sample_ids,
+        index_unique="-",
+        fill_value=0,
     )
+
+    # Preserve explicit sample_id column if available.
+    if "sample_id" not in combined.obs.columns:
+        combined.obs["sample_id"] = combined.obs["loaded_sample_id"].astype(str)
+
+    if "batch_id" not in combined.obs.columns:
+        combined.obs["batch_id"] = combined.obs["sample_id"].astype(str)
+
+    combined = _finalize_adata(combined)
+
+    print(
+        f"Combined dataset: {combined.n_obs:,} cells x {combined.n_vars:,} genes "
+        f"from {len(sample_ids)} samples"
+    )
+
+    return combined
+
+
+def _discover_sample_inputs(root: Path) -> List[Tuple[str, Path]]:
+    """
+    Discover sample inputs one level below root.
+
+    Supported patterns:
+    - root/sample1.h5ad
+    - root/sample2.h5ad
+    - root/sample1/filtered_feature_bc_matrix/
+    - root/sample2/sample2.h5ad
+    """
+
+    discovered: List[Tuple[str, Path]] = []
+
+    # Direct files in root.
+    for item in sorted(root.iterdir()):
+        if item.name.startswith("."):
+            continue
+
+        if item.is_file() and item.suffix.lower() in SUPPORTED_SINGLE_FILE_SUFFIXES:
+            sample_id = item.stem
+            discovered.append((sample_id, item))
+
+    # Direct subdirectories.
+    for item in sorted(root.iterdir()):
+        if item.name.startswith("."):
+            continue
+
+        if not item.is_dir():
+            continue
+
+        if item.name in {"outputs", "runs", "reports", "__pycache__"}:
+            continue
+
+        if _looks_like_10x_mtx_dir(item):
+            discovered.append((item.name, item))
+            continue
+
+        inner = _find_primary_input_inside_directory(item)
+
+        if inner is not None:
+            discovered.append((item.name, inner))
+
+    # Deduplicate by path.
+    seen = set()
+    unique = []
+
+    for sample_id, path in discovered:
+        key = str(path.resolve())
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append((sample_id, path))
+
+    return unique
+
+
+def _find_primary_input_inside_directory(directory: Path) -> Optional[Path]:
+    """
+    Find the most likely single-cell input inside one sample directory.
+    """
+
+    if _looks_like_10x_mtx_dir(directory):
+        return directory
+
+    candidates = []
+
+    for item in sorted(directory.iterdir()):
+        if item.name.startswith("."):
+            continue
+
+        if item.is_file() and item.suffix.lower() in SUPPORTED_SINGLE_FILE_SUFFIXES:
+            candidates.append(item)
+
+        if item.is_dir() and _looks_like_10x_mtx_dir(item):
+            candidates.append(item)
+
+    if not candidates:
+        return None
+
+    priority = {
+        ".h5ad": 0,
+        ".h5": 1,
+        ".loom": 2,
+        ".csv": 3,
+        ".tsv": 4,
+        ".txt": 5,
+    }
+
+    def sort_key(path: Path):
+        if path.is_dir():
+            return -1
+
+        return priority.get(path.suffix.lower(), 99)
+
+    candidates = sorted(candidates, key=sort_key)
+
+    return candidates[0]
+
+
+# ---------------------------------------------------------------------
+# 10x detection
+# ---------------------------------------------------------------------
+def _looks_like_10x_mtx_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+
+    names = {p.name for p in path.iterdir() if p.is_file()}
+
+    has_matrix = "matrix.mtx" in names or "matrix.mtx.gz" in names
+    has_barcodes = "barcodes.tsv" in names or "barcodes.tsv.gz" in names
+
+    has_features = (
+        "features.tsv" in names
+        or "features.tsv.gz" in names
+        or "genes.tsv" in names
+        or "genes.tsv.gz" in names
+    )
+
+    return has_matrix and has_barcodes and has_features
+
+
+# ---------------------------------------------------------------------
+# Metadata inference
+# ---------------------------------------------------------------------
+def _infer_condition_from_name(name: str) -> Optional[str]:
+    """
+    Conservative condition inference from sample/folder names.
+    """
+
+    x = str(name).lower()
+
+    healthy_terms = [
+        "healthy",
+        "control",
+        "ctrl",
+        "normal",
+        "untreated",
+        "vehicle",
+        "baseline",
+    ]
+
+    covid_terms = [
+        "covid",
+        "sarscov2",
+        "sars_cov_2",
+        "infected",
+    ]
+
+    ifn_terms = [
+        "ifn",
+        "ifnb",
+        "ifn_beta",
+        "stim",
+        "stimulated",
+        "treated",
+    ]
+
+    disease_terms = [
+        "disease",
+        "case",
+        "tumor",
+        "tumour",
+        "cancer",
+        "patient",
+    ]
+
+    if any(term in x for term in healthy_terms):
+        return "Healthy"
+
+    if any(term in x for term in covid_terms):
+        return "COVID"
+
+    if any(term in x for term in ifn_terms):
+        return "IFN_beta"
+
+    if any(term in x for term in disease_terms):
+        return "Disease"
+
+    return None
+
+
+# ---------------------------------------------------------------------
+# Final cleanup
+# ---------------------------------------------------------------------
+def _obs_column_is_empty(adata, col: str) -> bool:
+    """
+    Return True if an obs column is missing or contains only empty/null-like values.
+    """
+
+    if col not in adata.obs.columns:
+        return True
+
+    values = adata.obs[col]
+
+    if values.isna().all():
+        return True
+
+    as_str = values.astype(str).str.strip().str.lower()
+
+    empty_tokens = {"", "nan", "none", "null", "na", "n/a"}
+
+    return bool(as_str.isin(empty_tokens).all())
+
+def _finalize_adata(adata):
+    adata.obs_names_make_unique()
+    adata.var_names_make_unique()
+
+    if "feature_name" not in adata.var.columns:
+        adata.var["feature_name"] = adata.var_names.astype(str)
+
+    return adata
