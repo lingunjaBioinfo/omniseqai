@@ -41,6 +41,7 @@ class TableExporter:
         self._export_marker_genes(results, outdir, table_paths)
         self._export_celltype_counts(results, outdir, table_paths)
         self._export_integration_qc(results, outdir, table_paths)
+        self._export_biology_validation(results, outdir, table_paths)
 
         return table_paths
 
@@ -371,3 +372,33 @@ class TableExporter:
             table.to_csv(path, index=True)
 
             table_paths[f"integration_qc.{safe_name}"] = str(path)
+    # --------------------------------------------------
+    # Biology validation
+    # --------------------------------------------------
+    def _export_biology_validation(
+        self,
+        results: Dict[str, Any],
+        outdir: Path,
+        table_paths: Dict[str, str],
+    ) -> None:
+        validation = results.get("biology_validation", {}) or {}
+
+        if not validation:
+            return
+
+        bio_dir = outdir / "biology_validation"
+        bio_dir.mkdir(parents=True, exist_ok=True)
+
+        summary = validation.get("summary")
+
+        if self._is_dataframe(summary) and not summary.empty:
+            path = bio_dir / "signature_summary.csv"
+            summary.to_csv(path, index=False)
+            table_paths["biology_validation.signature_summary"] = str(path)
+
+        hits = validation.get("hits")
+
+        if self._is_dataframe(hits) and not hits.empty:
+            path = bio_dir / "signature_hits.csv"
+            hits.to_csv(path, index=False)
+            table_paths["biology_validation.signature_hits"] = str(path)

@@ -10,6 +10,9 @@ from backend.gene_symbol_utils import ensure_de_gene_symbols
 from backend.router_report import RouterReport
 from backend.router_pdf_report import RouterPDFReport
 from backend.report_figures import ReportFigures
+from backend.biology_validator import BiologyValidator
+from backend.biology_report_utils import append_biology_section
+
 
 from backend.integration_qc import IntegrationQC
 from backend.table_exporter import TableExporter
@@ -41,6 +44,7 @@ class PipelineOrchestrator:
         self.figures = ReportFigures()
         self.table_exporter = TableExporter()
         self.integration_qc = IntegrationQC()
+        self.biology_validator = BiologyValidator()
 
     def run(
         self,
@@ -153,22 +157,48 @@ class PipelineOrchestrator:
                     .replace("/", "_")
                 )
 
-                figure_paths["volcano"] = self.figures.volcano(
-                    de_results=de_results,
-                    group1=pair[0],
-                    group2=pair[1],
-                    title=f"{pair[0]} vs {pair[1]}",
-                    filename=f"volcano_{pair_name}_standard.png",
-                )
+                # --------------------------------------------------
+                # Volcano plot
+                # --------------------------------------------------
+                if de_results is None:
+                    print(f"Skipping volcano for {pair_name}: de_results is None")
 
+                elif hasattr(de_results, "empty") and de_results.empty:
+                    print(f"Skipping volcano for {pair_name}: de_results is empty")
+
+                else:
+                    print(
+                        f"Generating volcano for {pair_name}: "
+                        f"{len(de_results)} genes"
+                    )
+
+                    volcano_path = self.figures.volcano(
+                        de_results=de_results,
+                        group1=pair[0],
+                        group2=pair[1],
+                        title=f"{pair[0]} vs {pair[1]}",
+                        filename=f"volcano_{pair_name}_standard.png",
+                    )
+
+                    if volcano_path:
+                        figure_paths["volcano"] = volcano_path
+                    else:
+                        print(f"Volcano function returned None for {pair_name}")
+
+                # --------------------------------------------------
+                # Pseudobulk heatmap
+                # --------------------------------------------------
                 if pb is not None:
-                    figure_paths["pseudobulk_heatmap"] = self.figures.pseudobulk_heatmap(
+                    heatmap_path = self.figures.pseudobulk_heatmap(
                         pb,
                         de_results,
                         condition_col="condition",
                         filename=f"pseudobulk_heatmap_{pair_name}.png",
                         top_n=40,
                     )
+
+                    if heatmap_path:
+                        figure_paths["pseudobulk_heatmap"] = heatmap_path
 
                 # Only one primary whole-dataset comparison for now.
                 break
@@ -228,20 +258,39 @@ class PipelineOrchestrator:
                         filename="umap_integrated_condition.png",
                     )
 
+            # --------------------------------------------------
+            # Biology validation
+            # --------------------------------------------------
+            results["biology_validation"] = self.biology_validator.run(results)
+
+            biology_validation = results.get("biology_validation")
+
+            if biology_validation:
+                bio_plot = self.figures.biology_signature_hits(
+                    biology_validation,
+                    filename="biology_signature_hits.png",
+                )
+
+                if bio_plot:
+                    figure_paths["biology_signature_hits"] = bio_plot
+
             results["figure_paths"] = figure_paths
             results["table_paths"] = self.table_exporter.export(results)
+
             report_text = self.reporter.build(results)
+            report_text = append_biology_section(report_text, results)
             report_text = append_integration_section(report_text, results)
             report_text = append_table_section(report_text, results)
+
             self.reporter.save(
                 report_text,
-                report_txt
+                report_txt,
             )
 
             if generate_pdf:
                 self.pdf_reporter.save(
                     results,
-                    report_pdf
+                    report_pdf,
                 )
 
             results["report_text"] = report_text

@@ -23,6 +23,7 @@ from reportlab.platypus import (
 
 from backend.report_table_utils import format_table_section
 from backend.integration_report_utils import format_integration_section
+from backend.biology_report_utils import format_biology_section
 
 class RouterPDFReport:
 
@@ -190,6 +191,39 @@ class RouterPDFReport:
 
         if len(flow) <= 3:
             return []
+
+        return flow
+
+    def _biology_validation_section(self, results: Dict[str, Any]):
+        """
+        Build the biology validation section for the PDF report.
+        """
+
+        section_text = format_biology_section(results)
+
+        if not section_text:
+            return []
+
+        flow = []
+
+        lines = [line.strip() for line in section_text.splitlines() if line.strip()]
+
+        flow.append(Paragraph("Biology Validation", self.h1))
+
+        for line in lines:
+            if line == "Biology Validation":
+                continue
+
+            if set(line) == {"-"}:
+                continue
+
+            if line.startswith("- "):
+                flow.append(Paragraph("• " + escape(line[2:]), self.body))
+                flow.append(Spacer(1, 0.035 * inch))
+
+            else:
+                flow.append(Paragraph(escape(line), self.body))
+                flow.append(Spacer(1, 0.035 * inch))
 
         return flow
 
@@ -381,6 +415,10 @@ class RouterPDFReport:
                 "Figure 4. Volcano plot showing condition-associated differential expression.",
             ),
             (
+                "biology_signature_hits",
+                "Biology validation summary showing detected signature evidence.",
+            ),
+            (
                 "pseudobulk_heatmap",
                 "Figure 5. Clustered heatmap of top pseudobulk differential genes.",
             ),
@@ -463,6 +501,15 @@ class RouterPDFReport:
                 story.extend(self._bullets(interpretation))
 
             story.append(Spacer(1, 0.12 * inch))
+
+        # --------------------------------------------------
+        # These sections must be OUTSIDE the cell-type loop.
+        # --------------------------------------------------
+        biology_flow = self._biology_validation_section(results)
+
+        if biology_flow:
+            story.append(PageBreak())
+            story.extend(biology_flow)
 
         integration_flow = self._integration_qc_section(results)
 

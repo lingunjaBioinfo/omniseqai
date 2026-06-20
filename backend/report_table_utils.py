@@ -78,6 +78,12 @@ def _describe_table(key: str, path: str) -> str:
             return "Cell counts per condition."
         return "Multi-sample or batch-aware QC table."
 
+    if "biology_validation" in key_lower or "biology_validation" in path_lower:
+        if "signature_summary" in key_lower or "signature_summary" in path_lower:
+            return "Summary of detected biological signatures."
+        if "signature_hits" in key_lower or "signature_hits" in path_lower:
+            return "Gene-level evidence supporting detected biological signatures."
+        return "Biology validation output table."
 
     if path_lower.endswith(".csv"):
         return "Exported CSV analysis table."
@@ -99,6 +105,7 @@ def _ordered_table_items(table_paths: Dict[str, str]) -> List[tuple[str, str]]:
         "celltype_counts_by_condition",
         "celltype_proportions_by_condition",
         "integration_qc",
+        "biology_validation",
         "condition_de",
         "celltype_specific",
         "marker_genes",
