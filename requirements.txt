@@ -1,0 +1,15 @@
+numpy
+pandas
+scipy
+scikit-learn
+statsmodels
+matplotlib
+scanpy
+anndata
+h5py
+loompy
+leidenalg
+igraph
+reportlab
+adjustText
+harmonypy

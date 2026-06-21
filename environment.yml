@@ -1,0 +1,27 @@
+name: omniseqai
+
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - scanpy
+  - anndata
+  - h5py
+  - loompy
+  - leidenalg
+  - python-igraph
+  - reportlab
+  - poppler
+  - pip
+  - pip:
+      - adjustText
+      - harmonypy

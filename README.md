@@ -7,6 +7,35 @@ It supports automated mode selection, condition-based differential expression, e
 The current validated demo uses the Kang IFN-beta PBMC dataset and correctly detects a strong interferon-stimulated antiviral response in IFN-beta-treated immune cells.
 
 ---
+## Installation
+
+Recommended setup uses Conda:
+
+```bash
+conda env create -f environment.yml
+conda activate omniseqai
+```
+
+To update an existing environment:
+
+```bash
+conda env update -f environment.yml --prune
+conda activate omniseqai
+```
+
+Pip-only fallback:
+
+```bash
+pip install -r requirements.txt
+```
+
+For PDF text validation in the regression script, `pdftotext` is required. The Conda environment installs it through `poppler`.
+
+On Ubuntu, it can also be installed manually:
+
+```bash
+sudo apt install poppler-utils
+```
 
 ## Core Capabilities
 
@@ -23,7 +52,7 @@ OmniSeqAI currently supports:
 * Cell-type proportion plots.
 * Machine-readable CSV/JSON output tables.
 * PDF and text reports.
-* Biology validation using predefined gene signatures.
+* Biology validation using built-in curated gene-signature panels.
 * Cell-type localization of detected biological programs.
 * Regression testing using a validated Kang IFN-beta run.
 
