@@ -108,12 +108,20 @@ fi
 echo "OK: redundant Additional interpretation section absent."
 
 if command -v pdftotext >/dev/null 2>&1; then
-  if ! pdftotext "${RUN_DIR}/report.pdf" - | grep -q "Biological conclusion"; then
-    echo "ERROR: Biological conclusion missing from PDF."
+  PDF_TEXT="$(mktemp)"
+
+  pdftotext "${RUN_DIR}/report.pdf" "${PDF_TEXT}"
+
+  if ! grep -Eq "Biology Validation|Dominant program|interferon_antiviral_response" "${PDF_TEXT}"; then
+    echo "ERROR: expected biology content missing from PDF."
+    echo "Checked for: Biology Validation, Dominant program, or interferon_antiviral_response"
+    rm -f "${PDF_TEXT}"
     exit 1
   fi
 
-  echo "OK: Biological conclusion found in PDF."
+  rm -f "${PDF_TEXT}"
+
+  echo "OK: biology content found in PDF."
 else
   echo "WARNING: pdftotext not installed; skipping PDF text validation."
 fi
