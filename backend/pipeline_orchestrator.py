@@ -264,7 +264,6 @@ class PipelineOrchestrator:
             results["biology_validation"] = self.biology_validator.run(results)
 
             biology_validation = results.get("biology_validation")
-
             if biology_validation:
                 bio_plot = self.figures.biology_signature_hits(
                     biology_validation,
@@ -273,6 +272,14 @@ class PipelineOrchestrator:
 
                 if bio_plot:
                     figure_paths["biology_signature_hits"] = bio_plot
+
+                bio_celltype_plot = self.figures.biology_celltype_signature_heatmap(
+                    biology_validation,
+                    filename="biology_celltype_signature_heatmap.png",
+                )
+
+                if bio_celltype_plot:
+                    figure_paths["biology_celltype_signature_heatmap"] = bio_celltype_plot
 
             results["figure_paths"] = figure_paths
             results["table_paths"] = self.table_exporter.export(results)

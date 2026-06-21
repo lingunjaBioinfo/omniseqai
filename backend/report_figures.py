@@ -873,3 +873,150 @@ class ReportFigures:
         print(f"Saved figure: {output_path}")
 
         return str(output_path)
+
+    def biology_celltype_signature_heatmap(
+        self,
+        biology_validation,
+        filename: str = "biology_celltype_signature_heatmap.png",
+        top_n_signatures: int = 12,
+    ):
+        """
+        Heatmap showing which cell types drive detected biological signatures.
+
+        Rows: biological signatures
+        Columns: cell types
+        Values: number of expected genes significantly upregulated
+        """
+
+        if not biology_validation:
+            return None
+
+        summary = biology_validation.get("summary")
+
+        if summary is None or getattr(summary, "empty", True):
+            print("No biology validation summary available for cell-type heatmap.")
+            return None
+
+        required = {
+            "scope",
+            "cell_type",
+            "signature",
+            "n_case_up_hits",
+        }
+
+        missing = required - set(summary.columns)
+
+        if missing:
+            print(
+                "Biology validation summary missing columns for cell-type heatmap: "
+                f"{sorted(missing)}"
+            )
+            return None
+
+        df = summary.copy()
+
+        df = df[df["scope"].astype(str) == "celltype_specific"].copy()
+
+        if df.empty:
+            print("No cell-type-specific biology validation results available.")
+            return None
+
+        df["n_case_up_hits"] = pd.to_numeric(
+            df["n_case_up_hits"],
+            errors="coerce",
+        ).fillna(0)
+
+        matrix = df.pivot_table(
+            index="signature",
+            columns="cell_type",
+            values="n_case_up_hits",
+            aggfunc="max",
+            fill_value=0,
+        )
+
+        if matrix.empty:
+            print("Empty cell-type biology matrix.")
+            return None
+
+        # Remove signatures with no evidence.
+        matrix = matrix.loc[matrix.sum(axis=1) > 0]
+
+        if matrix.empty:
+            print("No detected signature evidence for cell-type heatmap.")
+            return None
+
+        # Rank signatures by total evidence and keep top N.
+        matrix["_sum"] = matrix.sum(axis=1)
+        matrix = matrix.sort_values("_sum", ascending=False)
+        matrix = matrix.drop(columns=["_sum"])
+        matrix = matrix.head(top_n_signatures)
+
+        # Order cell types by total evidence.
+        matrix = matrix.loc[:, matrix.sum(axis=0).sort_values(ascending=False).index]
+
+        row_labels = [
+            str(x).replace("_", " ")
+            for x in matrix.index.tolist()
+        ]
+
+        col_labels = [
+            str(x)
+            for x in matrix.columns.tolist()
+        ]
+
+        values = matrix.values.astype(float)
+
+        fig_width = max(8.0, 0.6 * len(col_labels))
+        fig_height = max(4.8, 0.45 * len(row_labels))
+
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=150)
+
+        im = ax.imshow(
+            values,
+            aspect="auto",
+            interpolation="nearest",
+            cmap="YlOrRd",
+        )
+
+        ax.set_xticks(np.arange(len(col_labels)))
+        ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+
+        ax.set_yticks(np.arange(len(row_labels)))
+        ax.set_yticklabels(row_labels, fontsize=8)
+
+        ax.set_xlabel("Cell type")
+        ax.set_ylabel("Biological signature")
+        ax.set_title(
+            "Cell-type localization of biological programs",
+            fontsize=13,
+            weight="bold",
+        )
+
+        # Add values inside cells when matrix is not too large.
+        if values.size <= 120:
+            for i in range(values.shape[0]):
+                for j in range(values.shape[1]):
+                    value = int(values[i, j])
+
+                    if value > 0:
+                        ax.text(
+                            j,
+                            i,
+                            str(value),
+                            ha="center",
+                            va="center",
+                            fontsize=7,
+                        )
+
+        cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.03)
+        cbar.set_label("Detected expected genes")
+
+        fig.tight_layout()
+
+        output_path = self._path(filename)
+        fig.savefig(output_path, bbox_inches="tight")
+        plt.close(fig)
+
+        print(f"Saved figure: {output_path}")
+
+        return str(output_path)

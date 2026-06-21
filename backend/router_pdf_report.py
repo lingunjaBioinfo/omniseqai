@@ -419,6 +419,10 @@ class RouterPDFReport:
                 "Biology validation summary showing detected signature evidence.",
             ),
             (
+                "biology_celltype_signature_heatmap",
+                "Cell-type localization of detected biological signatures.",
+            ),
+            (
                 "pseudobulk_heatmap",
                 "Figure 5. Clustered heatmap of top pseudobulk differential genes.",
             ),
