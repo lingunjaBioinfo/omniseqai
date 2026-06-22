@@ -1,42 +1,49 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
 
-# Virtual environments
-venv/
-.env/
-
-# Conda
+*$py.class
+*.backup
 .conda/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# IDEs
-.vscode/
-.idea/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Data files
-*.h5ad
-*.h5
-*.loom
-
-# Generated outputs
-outputs/
-reports/
-
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-runs/
-reports/
-outputs/
+# Conda
+condaenv.*.requirements.txt
+# Conda temporary files
 data/external/
+# Data files
+data/**/*.h5
+data/**/*.h5ad
+data/**/*.loom
+.DS_Store
+.env
+.env/
+# Environment files
+# Generated outputs
+*.h5
+*.h5ad
+.idea/
+# IDEs
+.ipynb_checkpoints/
+# Jupyter
+# Large local data files
+# Local backups
+*.log
+# Logs
+*.loom
+# OmniSeqAI local outputs
+# OS files
+outputs/
+*.pyc
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.pytest_cache/
+# Python
+# Python cache
+README.md.backup.*
+reports/
+runs/
+# Temporary files
+Thumbs.db
+*.tmp
+.venv/
+venv/
+# Virtual environments
+.vscode/
