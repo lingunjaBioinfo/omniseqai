@@ -41,6 +41,11 @@ def parse_args():
         default="reports/router_report.pdf",
         help="Output PDF report path",
     )
+    parser.add_argument(
+        "--signatures",
+        default=None,
+        help="Optional CSV/TSV file containing user-defined biology signatures.",
+    )
     return parser.parse_args()
 
 
@@ -61,6 +66,7 @@ def main():
         report_txt=args.output,
         report_pdf=args.pdf,
         generate_pdf=True,
+        user_signature_path=args.signatures,
     )
 
     decision = results.get("decision", None)

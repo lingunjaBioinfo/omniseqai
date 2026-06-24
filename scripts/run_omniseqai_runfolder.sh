@@ -4,11 +4,16 @@ set -euo pipefail
 INPUT=""
 MODE="auto"
 RUN_NAME=""
+SIGNATURES=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --input)
       INPUT="$2"
+      shift 2
+      ;;
+    --signatures)
+      SIGNATURES="$2"
       shift 2
       ;;
     --mode)
@@ -81,11 +86,17 @@ rm -rf outputs/tables/*
 # Run OmniSeqAI.
 # Capture both stdout and stderr so warnings are stored in run.log.
 # ------------------------------------------------------------
+SIGNATURE_ARGS=()
+
+if [[ -n "${SIGNATURES}" ]]; then
+  SIGNATURE_ARGS+=(--signatures "${SIGNATURES}")
+fi
 python run_omniseqai.py \
   --input "$INPUT" \
   --mode "$MODE" \
   --output "$REPORT_TXT" \
-  --pdf "$REPORT_PDF" 2>&1 | tee "$LOG_FILE"
+  --pdf "$REPORT_PDF" \
+  "${SIGNATURE_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
 # ------------------------------------------------------------
 # Copy only figures generated during this run.

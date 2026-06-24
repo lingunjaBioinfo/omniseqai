@@ -1,0 +1,11 @@
+signature_name,gene,description,expected_direction
+custom_ifn_response,ISG15,User-defined interferon response,case_up
+custom_ifn_response,IFIT1,User-defined interferon response,case_up
+custom_ifn_response,IFIT2,User-defined interferon response,case_up
+custom_ifn_response,IFIT3,User-defined interferon response,case_up
+custom_ifn_response,MX1,User-defined interferon response,case_up
+custom_ifn_response,OAS1,User-defined interferon response,case_up
+custom_ifn_response,OAS2,User-defined interferon response,case_up
+custom_ifn_response,IRF7,User-defined interferon response,case_up
+custom_ifn_response,STAT1,User-defined interferon response,case_up
+custom_ifn_response,RSAD2,User-defined interferon response,case_up

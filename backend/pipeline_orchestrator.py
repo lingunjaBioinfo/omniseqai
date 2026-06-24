@@ -48,12 +48,15 @@ class PipelineOrchestrator:
 
     def run(
         self,
-        adata,
+        data,
         mode: str = "auto",
         generate_pdf: bool = True,
         report_txt: str = "reports/router_report.txt",
         report_pdf: str = "reports/router_report.pdf",
+        user_signature_path=None,
     ) -> Dict[str, Any]:
+
+        adata = data
 
         # Preserve original gene annotation before router modifies adata.
         # This is required for mapping Ensembl IDs back to gene symbols
@@ -78,6 +81,12 @@ class PipelineOrchestrator:
             "decision": decision,
             "adata": adata,
         }
+
+        if user_signature_path:
+            self.biology_validator = BiologyValidator(
+                user_signature_path=user_signature_path
+            )
+            results["user_signature_path"] = str(user_signature_path)
 
         integration_qc = self.integration_qc.run(
             adata,
