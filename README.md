@@ -280,3 +280,30 @@ Before pushing future changes, run:
 
 Only commit if the regression check passes.
 
+
+## User-defined biology signatures
+
+OmniSeqAI supports optional user-defined biology signatures through the `--signatures` argument.
+
+Example:
+
+```bash
+./scripts/run_omniseqai_runfolder.sh \
+  --input data/kang_ifnb/kang_ifnb.h5ad \
+  --mode condition \
+  --run-name kang_custom_signature_test \
+  --signatures examples/custom_ifn_signature.csv
+```
+
+A minimal signature file requires:
+
+```csv
+signature_name,gene
+custom_ifn_response,ISG15
+custom_ifn_response,IFIT1
+custom_ifn_response,MX1
+```
+
+Optional columns include `description` and `expected_direction`.
+
+Full documentation is available in [`docs/SIGNATURES.md`](docs/SIGNATURES.md).
