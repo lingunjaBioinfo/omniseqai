@@ -1,36 +1,179 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from backend.biology_signatures import BIOLOGY_SIGNATURES, normalize_gene_symbol
 
 
-def _pick_col(df: pd.DataFrame, candidates):
-    lower_to_original = {str(c).lower(): c for c in df.columns}
+SIGNATURE_COLUMNS = [
+    "signature_name",
+    "signature",
+    "pathway",
+    "program",
+    "gene_set",
+    "geneset",
+]
+
+GENE_COLUMNS = [
+    "gene",
+    "gene_symbol",
+    "symbol",
+    "gene_name",
+]
+
+GENE_LIST_COLUMNS = [
+    "genes",
+    "gene_list",
+    "gene_symbols",
+    "symbols",
+]
+
+DESCRIPTION_COLUMNS = [
+    "description",
+    "desc",
+    "label",
+]
+
+DIRECTION_COLUMNS = [
+    "expected_direction",
+    "direction",
+]
+
+VALID_DIRECTIONS = {
+    "case_up",
+    "up",
+    "upregulated",
+    "positive",
+    "higher",
+    "case_down",
+    "down",
+    "downregulated",
+    "negative",
+    "lower",
+    "either",
+    "any",
+    "changed",
+    "both",
+}
+
+
+def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    lower_to_original = {str(col).lower().strip(): col for col in df.columns}
 
     for candidate in candidates:
-        if candidate.lower() in lower_to_original:
-            return lower_to_original[candidate.lower()]
+        key = candidate.lower().strip()
+
+        if key in lower_to_original:
+            return lower_to_original[key]
 
     return None
 
 
+def _read_signature_table(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+
+    if suffix in {".tsv", ".txt"}:
+        return pd.read_csv(path, sep="\t")
+
+    if suffix == ".csv":
+        return pd.read_csv(path)
+
+    raise ValueError(
+        "Unsupported signature file format. "
+        "Use .csv, .tsv, or .txt."
+    )
+
+
+def _split_genes(value: Any) -> List[str]:
+    if pd.isna(value):
+        return []
+
+    text = str(value).strip()
+
+    if not text or text.lower() == "nan":
+        return []
+
+    for sep in [";", "|"]:
+        text = text.replace(sep, ",")
+
+    genes = []
+
+    for part in text.split(","):
+        gene = normalize_gene_symbol(part)
+
+        if gene and gene.lower() != "nan":
+            genes.append(gene)
+
+    return genes
+
+
+def _clean_signature_name(value: Any) -> str:
+    if pd.isna(value):
+        return ""
+
+    name = str(value).strip()
+
+    if not name or name.lower() == "nan":
+        return ""
+
+    return name
+
+
+def _clean_description(value: Any, fallback: str) -> str:
+    if pd.isna(value):
+        return fallback.replace("_", " ")
+
+    description = str(value).strip()
+
+    if not description or description.lower() == "nan":
+        return fallback.replace("_", " ")
+
+    return description
+
+
+def _clean_expected_direction(value: Any) -> str:
+    if pd.isna(value):
+        return "case_up"
+
+    direction = str(value).strip().lower()
+
+    if not direction or direction == "nan":
+        return "case_up"
+
+    if direction not in VALID_DIRECTIONS:
+        raise ValueError(
+            f"Invalid expected_direction value: {direction}. "
+            f"Accepted values are: {', '.join(sorted(VALID_DIRECTIONS))}"
+        )
+
+    return direction
+
+
 def load_user_signatures(path: Optional[str]) -> Dict[str, Dict[str, Any]]:
     """
-    Load user-defined biology signatures from CSV/TSV.
+    Load user-defined biology signatures from CSV/TSV/TXT.
 
-    Required columns:
-    - signature_name or signature or pathway or program
-    - gene or gene_symbol or symbol
+    Supported formats:
 
-    Optional columns:
+    1. One gene per row:
+       signature_name,gene,description,expected_direction
+       my_signature,ISG15,Interferon response,case_up
+       my_signature,IFIT1,Interferon response,case_up
+
+    2. Multiple genes in one cell:
+       signature_name,genes,description,expected_direction
+       my_signature,"ISG15,IFIT1,MX1",Interferon response,case_up
+
+    Required:
+    - one signature-name column
+    - one gene column OR one gene-list column
+
+    Optional:
     - description
     - expected_direction
-
-    Returns a dictionary compatible with BIOLOGY_SIGNATURES.
     """
 
     if not path:
@@ -41,88 +184,67 @@ def load_user_signatures(path: Optional[str]) -> Dict[str, Dict[str, Any]]:
     if not p.exists():
         raise FileNotFoundError(f"Signature file not found: {p}")
 
-    if p.suffix.lower() in {".tsv", ".txt"}:
-        df = pd.read_csv(p, sep="\t")
-    else:
-        df = pd.read_csv(p)
+    df = _read_signature_table(p)
 
     if df.empty:
         raise ValueError(f"Signature file is empty: {p}")
 
-    sig_col = _pick_col(
-        df,
-        [
-            "signature_name",
-            "signature",
-            "pathway",
-            "program",
-            "gene_set",
-            "geneset",
-        ],
-    )
-
-    gene_col = _pick_col(
-        df,
-        [
-            "gene",
-            "gene_symbol",
-            "symbol",
-            "gene_name",
-        ],
-    )
-
-    desc_col = _pick_col(
-        df,
-        [
-            "description",
-            "desc",
-            "label",
-        ],
-    )
-
-    direction_col = _pick_col(
-        df,
-        [
-            "expected_direction",
-            "direction",
-        ],
-    )
+    sig_col = _pick_col(df, SIGNATURE_COLUMNS)
+    gene_col = _pick_col(df, GENE_COLUMNS)
+    gene_list_col = _pick_col(df, GENE_LIST_COLUMNS)
+    desc_col = _pick_col(df, DESCRIPTION_COLUMNS)
+    direction_col = _pick_col(df, DIRECTION_COLUMNS)
 
     if sig_col is None:
         raise ValueError(
             "Signature file must contain one signature column: "
-            "signature_name, signature, pathway, program, gene_set, or geneset."
+            + ", ".join(SIGNATURE_COLUMNS)
+            + "."
         )
 
-    if gene_col is None:
+    if gene_col is None and gene_list_col is None:
         raise ValueError(
-            "Signature file must contain one gene column: "
-            "gene, gene_symbol, symbol, or gene_name."
+            "Signature file must contain either one single-gene column "
+            f"({', '.join(GENE_COLUMNS)}) or one gene-list column "
+            f"({', '.join(GENE_LIST_COLUMNS)})."
         )
 
     signatures: Dict[str, Dict[str, Any]] = {}
 
-    for _, row in df.iterrows():
-        signature_name = str(row[sig_col]).strip()
+    for row_index, row in df.iterrows():
+        signature_name = _clean_signature_name(row.get(sig_col))
 
-        if not signature_name or signature_name.lower() == "nan":
+        if not signature_name:
             continue
 
-        gene = normalize_gene_symbol(row[gene_col])
+        row_genes: List[str] = []
 
-        if not gene or gene.lower() == "nan":
+        if gene_col is not None:
+            row_genes.extend(_split_genes(row.get(gene_col)))
+
+        if gene_list_col is not None:
+            row_genes.extend(_split_genes(row.get(gene_list_col)))
+
+        row_genes = list(dict.fromkeys(row_genes))
+
+        if not row_genes:
             continue
 
         if signature_name not in signatures:
             description = signature_name.replace("_", " ")
 
-            if desc_col is not None and pd.notna(row.get(desc_col)):
-                description = str(row[desc_col]).strip() or description
+            if desc_col is not None:
+                description = _clean_description(
+                    row.get(desc_col),
+                    fallback=signature_name,
+                )
 
             expected_direction = "case_up"
 
-            if direction_col is not None and pd.notna(row.get(direction_col)):
-                expected_direction = str(row[direction_col]).strip() or "case_up"
+            if direction_col is not None:
+                expected_direction = _clean_expected_direction(
+                    row.get(direction_col)
+                )
 
             signatures[signature_name] = {
                 "description": description,
@@ -131,11 +253,37 @@ def load_user_signatures(path: Optional[str]) -> Dict[str, Dict[str, Any]]:
                 "source": "user",
             }
 
-        if gene not in signatures[signature_name]["genes"]:
-            signatures[signature_name]["genes"].append(gene)
+        else:
+            if direction_col is not None:
+                row_direction = _clean_expected_direction(row.get(direction_col))
+                stored_direction = signatures[signature_name]["expected_direction"]
+
+                if row_direction != stored_direction:
+                    raise ValueError(
+                        "Inconsistent expected_direction values for signature "
+                        f"'{signature_name}' near row {row_index + 2}: "
+                        f"found '{row_direction}' but earlier rows used "
+                        f"'{stored_direction}'."
+                    )
+
+        for gene in row_genes:
+            if gene not in signatures[signature_name]["genes"]:
+                signatures[signature_name]["genes"].append(gene)
 
     if not signatures:
         raise ValueError(f"No valid signatures found in: {p}")
+
+    empty_signatures = [
+        name
+        for name, payload in signatures.items()
+        if not payload.get("genes")
+    ]
+
+    if empty_signatures:
+        raise ValueError(
+            "The following signatures have no valid genes: "
+            + ", ".join(empty_signatures)
+        )
 
     return signatures
 
